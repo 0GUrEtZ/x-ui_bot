@@ -1,0 +1,33 @@
+# Binaries
+bot
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files
+*_test.go
+
+# Output
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+README.md
+*.md
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore

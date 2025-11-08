@@ -1,0 +1,975 @@
+package bot
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"html"
+	"log"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"x-ui-bot/internal/config"
+	"x-ui-bot/pkg/client"
+
+	"github.com/mymmrac/telego"
+	th "github.com/mymmrac/telego/telegohandler"
+	tu "github.com/mymmrac/telego/telegoutil"
+)
+
+// Bot represents the Telegram bot
+type Bot struct {
+	config      *config.Config
+	apiClient   *client.APIClient
+	bot         *telego.Bot
+	handler     *th.BotHandler
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
+	isRunning   bool
+	userStates  map[int64]string
+	clientCache sync.Map // Cache for client data: "inboundID_index" -> client map
+}
+
+// NewBot creates a new Bot instance
+func NewBot(cfg *config.Config, apiClient *client.APIClient) (*Bot, error) {
+	bot, err := createTelegoBot(cfg.Telegram.Token, cfg.Telegram.Proxy, cfg.Telegram.APIServer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create telegram bot: %w", err)
+	}
+
+	return &Bot{
+		config:     cfg,
+		apiClient:  apiClient,
+		bot:        bot,
+		userStates: make(map[int64]string),
+	}, nil
+}
+
+// createTelegoBot creates a telego bot with optional proxy settings
+func createTelegoBot(token, proxy, apiServer string) (*telego.Bot, error) {
+	if proxy != "" || apiServer != "" {
+		// Handle proxy or custom API server
+		return telego.NewBot(token)
+	}
+	return telego.NewBot(token)
+}
+
+// Start starts the bot
+func (b *Bot) Start() error {
+	// Login to API
+	if err := b.apiClient.Login(); err != nil {
+		return fmt.Errorf("failed to login to panel: %w", err)
+	}
+
+	// Set bot commands
+	err := b.bot.SetMyCommands(context.Background(), &telego.SetMyCommandsParams{
+		Commands: []telego.BotCommand{
+			{Command: "start", Description: "Start the bot"},
+			{Command: "help", Description: "Show help message"},
+			{Command: "status", Description: "Show server status"},
+			{Command: "id", Description: "Get your Telegram ID"},
+			{Command: "usage", Description: "Get client usage statistics"},
+		},
+	})
+	if err != nil {
+		log.Printf("Failed to set bot commands: %v", err)
+	}
+
+	// Start message handling
+	if !b.isRunning {
+		go b.receiveMessages()
+		b.isRunning = true
+	}
+
+	return nil
+}
+
+// Stop stops the bot
+func (b *Bot) Stop() {
+	if b.cancel != nil {
+		b.cancel()
+		b.wg.Wait()
+	}
+	if b.handler != nil {
+		b.handler.Stop()
+	}
+	b.isRunning = false
+}
+
+// receiveMessages starts receiving and handling messages
+func (b *Bot) receiveMessages() {
+	ctx, cancel := context.WithCancel(context.Background())
+	b.cancel = cancel
+
+	updates, _ := b.bot.UpdatesViaLongPolling(ctx, &telego.GetUpdatesParams{
+		Timeout: 30,
+	})
+
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+
+		handler, _ := th.NewBotHandler(b.bot, updates)
+		b.handler = handler
+
+		// Handle commands
+		handler.HandleMessage(b.handleCommand, th.AnyCommand())
+
+		// Handle text messages (keyboard buttons)
+		handler.HandleMessage(b.handleTextMessage, th.AnyMessage())
+
+		// Handle callback queries
+		handler.HandleCallbackQuery(b.handleCallback, th.AnyCallbackQueryWithMessage())
+
+		handler.Start()
+	}()
+}
+
+// handleCommand handles incoming commands
+func (b *Bot) handleCommand(ctx *th.Context, message telego.Message) error {
+	chatID := message.Chat.ID
+	isAdmin := b.isAdmin(message.From.ID)
+
+	command, _, args := tu.ParseCommand(message.Text)
+
+	log.Printf("[INFO] Command /%s from user ID: %d", command, message.From.ID)
+
+	switch command {
+	case "start":
+		b.handleStart(chatID, message.From.FirstName, isAdmin)
+	case "help":
+		b.handleHelp(chatID)
+	case "status":
+		b.handleStatus(chatID, isAdmin)
+	case "id":
+		b.handleID(chatID, message.From.ID)
+	case "usage":
+		if len(args) > 1 {
+			email := args[1]
+			b.handleUsage(chatID, email, isAdmin)
+		} else {
+			b.sendMessage(chatID, "❌ Использование: /usage &lt;email&gt;")
+		}
+	case "clients":
+		b.handleClients(chatID, isAdmin)
+	default:
+		// Check if it's a client action command: /client_enable_1_0 or /client_disable_1_0
+		if strings.HasPrefix(command, "client_") && isAdmin {
+			parts := strings.Split(command, "_")
+			if len(parts) == 4 {
+				action := parts[1] // enable or disable
+				inboundID, err1 := strconv.Atoi(parts[2])
+				clientIndex, err2 := strconv.Atoi(parts[3])
+
+				if err1 == nil && err2 == nil {
+					cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
+					if clientData, ok := b.clientCache.Load(cacheKey); ok {
+						client := clientData.(map[string]string)
+						email := client["email"]
+
+						if action == "enable" {
+							err := b.handleEnableClient(inboundID, email, client)
+							if err != nil {
+								b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка: %v", err))
+							} else {
+								b.sendMessage(chatID, fmt.Sprintf("✅ Клиент %s разблокирован", email))
+								b.handleClients(chatID, isAdmin)
+							}
+						} else if action == "disable" {
+							err := b.handleDisableClient(inboundID, email, client)
+							if err != nil {
+								b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка: %v", err))
+							} else {
+								b.sendMessage(chatID, fmt.Sprintf("🔒 Клиент %s заблокирован", email))
+								b.handleClients(chatID, isAdmin)
+							}
+						}
+					} else {
+						b.sendMessage(chatID, "❌ Клиент не найден. Обновите список: /clients")
+					}
+					return nil
+				}
+			}
+		}
+
+		b.sendMessage(chatID, "❌ Неизвестная команда. Используйте /help для справки.")
+	}
+
+	return nil
+}
+
+// handleTextMessage handles text messages from keyboard buttons
+func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
+	// Skip if it's a command
+	if strings.HasPrefix(message.Text, "/") {
+		return nil
+	}
+
+	chatID := message.Chat.ID
+	isAdmin := b.isAdmin(message.From.ID)
+
+	if !isAdmin {
+		return nil
+	}
+
+	log.Printf("[INFO] Button pressed: '%s' by user ID: %d", message.Text, message.From.ID)
+
+	switch message.Text {
+	case "📊 Статус сервера":
+		b.handleStatus(chatID, isAdmin)
+	case "👥 Список клиентов":
+		b.handleClients(chatID, isAdmin)
+	case "🔍 Найти клиента":
+		b.sendMessage(chatID, "🔍 Введите email клиента или используйте команду:\n/usage &lt;email&gt;")
+	case "ℹ️ Помощь":
+		b.handleHelp(chatID)
+	}
+
+	return nil
+}
+
+// handleCallback handles callback queries
+func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error {
+	data := query.Data
+	userID := query.From.ID
+	chatID := query.Message.GetChat().ID
+	messageID := query.Message.GetMessageID()
+
+	log.Printf("[INFO] Callback from user %d: %s", userID, data)
+
+	// Check if user is admin
+	if !b.isAdmin(userID) {
+		b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "⛔ У вас нет прав",
+			ShowAlert:       true,
+		})
+		return nil
+	}
+
+	// Handle toggle_X_Y buttons
+	if strings.HasPrefix(data, "toggle_") {
+		parts := strings.Split(data, "_")
+		if len(parts) == 3 {
+			inboundID, err1 := strconv.Atoi(parts[1])
+			clientIndex, err2 := strconv.Atoi(parts[2])
+
+			if err1 == nil && err2 == nil {
+				cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
+				if clientData, ok := b.clientCache.Load(cacheKey); ok {
+					client := clientData.(map[string]string)
+					email := client["email"]
+					enable := client["enable"]
+
+					// Toggle the enable state
+					var err error
+					var resultMsg string
+					if enable == "false" {
+						err = b.handleEnableClient(inboundID, email, client)
+						resultMsg = "✅ Клиент разблокирован"
+					} else {
+						err = b.handleDisableClient(inboundID, email, client)
+						resultMsg = "🔒 Клиент заблокирован"
+					}
+
+					if err != nil {
+						b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+							CallbackQueryID: query.ID,
+							Text:            fmt.Sprintf("❌ Ошибка: %v", err),
+							ShowAlert:       true,
+						})
+					} else {
+						// Answer callback
+						b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+							CallbackQueryID: query.ID,
+							Text:            resultMsg,
+						})
+						// Refresh client list
+						b.handleClients(chatID, true, messageID)
+					}
+					return nil
+				}
+			}
+		}
+	}
+
+	// Default callback response
+	b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+		CallbackQueryID: query.ID,
+		Text:            "Обработка...",
+	})
+
+	return nil
+}
+
+// handleStart handles the /start command
+func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
+	log.Printf("[INFO] User %s (ID: %d) started bot", firstName, chatID)
+
+	msg := fmt.Sprintf("👋 Привет, %s!\n\n", firstName)
+	if isAdmin {
+		msg += "✅ Вы авторизованы как администратор\n\n"
+		msg += "Используйте кнопки ниже для управления:"
+
+		keyboard := tu.Keyboard(
+			tu.KeyboardRow(
+				tu.KeyboardButton("📊 Статус сервера"),
+				tu.KeyboardButton("👥 Список клиентов"),
+			),
+			tu.KeyboardRow(
+				tu.KeyboardButton("🔍 Найти клиента"),
+				tu.KeyboardButton("ℹ️ Помощь"),
+			),
+		).WithResizeKeyboard().WithIsPersistent()
+
+		b.sendMessageWithKeyboard(chatID, msg, keyboard)
+	} else {
+		msg += "Используйте /help для справки"
+		b.sendMessage(chatID, msg)
+	}
+}
+
+// handleHelp handles the /help command
+func (b *Bot) handleHelp(chatID int64) {
+	log.Printf("[INFO] Help requested by user ID: %d", chatID)
+
+	msg := `📋 Доступные команды:
+
+🏠 /start - Главное меню
+ℹ️ /help - Эта справка
+📊 /status - Статус сервера
+🆔 /id - Получить ваш Telegram ID
+👤 /usage &lt;email&gt; - Статистика клиента
+👥 /clients - Список всех клиентов
+
+Или используйте кнопки ниже для быстрого доступа.`
+	b.sendMessage(chatID, msg)
+}
+
+// handleStatus handles the /status command
+func (b *Bot) handleStatus(chatID int64, isAdmin bool) {
+	if !isAdmin {
+		b.sendMessage(chatID, "⛔ You don't have permission to use this command.")
+		return
+	}
+
+	status, err := b.apiClient.GetStatus()
+	if err != nil {
+		b.sendMessage(chatID, fmt.Sprintf("❌ Failed to get status: %v", err))
+		return
+	}
+
+	// Format status message
+	msg := "📊 Server Status:\n\n"
+	if obj, ok := status["obj"].(map[string]interface{}); ok {
+		if cpu, ok := obj["cpu"].(float64); ok {
+			msg += fmt.Sprintf("💻 CPU: %.2f%%\n", cpu)
+		}
+		if mem, ok := obj["mem"].(map[string]interface{}); ok {
+			if current, ok := mem["current"].(float64); ok {
+				if total, ok := mem["total"].(float64); ok {
+					msg += fmt.Sprintf("🧠 Memory: %.2f / %.2f GB\n", current/1024/1024/1024, total/1024/1024/1024)
+				}
+			}
+		}
+		if uptime, ok := obj["uptime"].(float64); ok {
+			hours := int(uptime / 3600)
+			minutes := int((uptime - float64(hours*3600)) / 60)
+			msg += fmt.Sprintf("⏱️ Uptime: %dh %dm\n", hours, minutes)
+		}
+	}
+
+	b.sendMessage(chatID, msg)
+}
+
+// handleID handles the /id command
+func (b *Bot) handleID(chatID, userID int64) {
+	log.Printf("[INFO] ID request from user ID: %d", userID)
+	msg := fmt.Sprintf("🆔 Ваш Telegram ID: <code>%d</code>", userID)
+	b.sendMessage(chatID, msg)
+}
+
+// handleClients handles the /clients command - shows all clients with traffic stats
+func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
+	if !isAdmin {
+		b.sendMessage(chatID, "⛔ У вас нет прав для использования этой команды")
+		return
+	}
+
+	log.Printf("[INFO] Clients list requested by user ID: %d", chatID)
+
+	if len(messageID) == 0 {
+		b.sendMessage(chatID, "⏳ Загружаю список клиентов...")
+	}
+
+	inbounds, err := b.apiClient.GetInbounds()
+	if err != nil {
+		log.Printf("[ERROR] Failed to get inbounds: %v", err)
+		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка получения списка: %v", err))
+		return
+	}
+
+	if len(inbounds) == 0 {
+		b.sendMessage(chatID, "📭 Нет доступных inbound'ов")
+		return
+	}
+
+	totalClients := 0
+	msg := "👥 <b>Список всех клиентов:</b>\n\n"
+
+	for _, inbound := range inbounds {
+		remark := "Unknown"
+		if r, ok := inbound["remark"].(string); ok {
+			remark = r
+		}
+
+		protocol := "unknown"
+		if p, ok := inbound["protocol"].(string); ok {
+			protocol = p
+		}
+
+		// Get inbound ID
+		inboundID := 0
+		if id, ok := inbound["id"].(float64); ok {
+			inboundID = int(id)
+		}
+
+		// Parse settings to get client configurations
+		settingsStr := ""
+		if s, ok := inbound["settings"].(string); ok {
+			settingsStr = s
+		}
+
+		clients := b.parseClients(settingsStr)
+
+		if len(clients) == 0 {
+			continue
+		}
+
+		// Get real traffic data for all clients in this inbound
+		trafficData := make(map[string]map[string]interface{})
+		if inboundID > 0 {
+			traffics, err := b.apiClient.GetClientTrafficsById(inboundID)
+			if err == nil {
+				for _, t := range traffics {
+					if email, ok := t["email"].(string); ok {
+						trafficData[email] = t
+					}
+				}
+			} else {
+				log.Printf("[WARN] Failed to get traffic for inbound %d: %v", inboundID, err)
+			}
+		}
+
+		msg += fmt.Sprintf("📡 <b>%s</b> (%s)\n", remark, protocol)
+
+		for i, client := range clients {
+			totalClients++
+
+			email := client["email"]
+			totalGB := client["totalGB"]
+			expiryTime := client["expiryTime"]
+			enable := client["enable"]
+
+			// Get real traffic stats
+			var up, down, total int64
+			if traffic, exists := trafficData[email]; exists {
+				if u, ok := traffic["up"].(float64); ok {
+					up = int64(u)
+				}
+				if d, ok := traffic["down"].(float64); ok {
+					down = int64(d)
+				}
+				total = up + down
+			}
+
+			status := "🟢"
+			if enable == "false" {
+				status = "🔴"
+			}
+
+			// Format client info message
+			msg += fmt.Sprintf("\n%d. %s <b>%s</b>\n", totalClients, status, html.EscapeString(email))
+			msg += fmt.Sprintf("   ⬆️ %s | ⬇️ %s | 📊 %s",
+				b.formatBytes(up),
+				b.formatBytes(down),
+				b.formatBytes(total))
+
+			// Show limit and percentage if set
+			if totalGB != "0" && totalGB != "" {
+				limitBytes, _ := strconv.ParseFloat(totalGB, 64)
+				limitBytes = limitBytes * 1024 * 1024 * 1024 // Convert GB to bytes
+				percentage := 0.0
+				if limitBytes > 0 {
+					percentage = (float64(total) / limitBytes) * 100
+				}
+
+				emoji := "🟢"
+				if percentage >= 90 {
+					emoji = "🔴"
+				} else if percentage >= 70 {
+					emoji = "🟡"
+				}
+
+				msg += fmt.Sprintf(" / %s GB %s (%.1f%%)", totalGB, emoji, percentage)
+			}
+
+			if expiryTime != "0" && expiryTime != "" {
+				expTime := b.formatTimestamp(expiryTime)
+
+				// Calculate days remaining
+				timestamp, _ := strconv.ParseInt(expiryTime, 10, 64)
+				if timestamp > 0 {
+					now := time.Now().Unix() * 1000
+					daysLeft := (timestamp - now) / (1000 * 60 * 60 * 24)
+
+					if daysLeft < 0 {
+						msg += fmt.Sprintf("\n   📅 Истёк: %s ⛔", expTime)
+					} else if daysLeft <= 3 {
+						msg += fmt.Sprintf("\n   📅 До: %s 🔴 (%d дн.)", expTime, daysLeft)
+					} else if daysLeft <= 7 {
+						msg += fmt.Sprintf("\n   📅 До: %s 🟡 (%d дн.)", expTime, daysLeft)
+					} else {
+						msg += fmt.Sprintf("\n   📅 До: %s (%d дн.)", expTime, daysLeft)
+					}
+				} else {
+					msg += fmt.Sprintf("\n   📅 До: %s", expTime)
+				}
+			}
+
+			// Add block/unblock button command hint
+			actionCmd := "enable"
+			actionEmoji := "✅"
+			if enable != "false" {
+				actionCmd = "disable"
+				actionEmoji = "🔒"
+			}
+			msg += fmt.Sprintf("\n   /client_%s_%d_%d %s\n", actionCmd, inboundID, i, actionEmoji)
+
+			// Store client info for callback handling
+			b.clientCache.Store(fmt.Sprintf("%d_%d", inboundID, i), client)
+		}
+
+		msg += "\n"
+	}
+
+	// Build inline keyboards with buttons for each inbound
+	// Group by inbound for better organization
+	for _, inbound := range inbounds {
+		remark := "Unknown"
+		if r, ok := inbound["remark"].(string); ok {
+			remark = r
+		}
+
+		// Get inbound ID
+		inboundID := 0
+		if id, ok := inbound["id"].(float64); ok {
+			inboundID = int(id)
+		}
+
+		// Parse settings to get client configurations
+		settingsStr := ""
+		if s, ok := inbound["settings"].(string); ok {
+			settingsStr = s
+		}
+
+		clients := b.parseClients(settingsStr)
+		if len(clients) == 0 {
+			continue
+		}
+
+		// Create inline keyboard buttons for this inbound's clients
+		var buttons [][]telego.InlineKeyboardButton
+		for i, client := range clients {
+			email := client["email"]
+			enable := client["enable"]
+			totalGB := client["totalGB"]
+
+			// Get real traffic stats for this client
+			var up, down, total int64
+			traffic, err := b.apiClient.GetClientTraffics(email)
+			if err == nil && traffic != nil {
+				if u, ok := traffic["up"].(float64); ok {
+					up = int64(u)
+				}
+				if d, ok := traffic["down"].(float64); ok {
+					down = int64(d)
+				}
+				total = up + down
+				log.Printf("[DEBUG] Client %s traffic: up=%d, down=%d, total=%d", email, up, down, total)
+			} else {
+				log.Printf("[DEBUG] No traffic data for client %s: %v", email, err)
+			}
+
+			// Status icon		// Create inline keyboard buttons for this inbound's clients
+			var buttons [][]telego.InlineKeyboardButton
+			for i, client := range clients {
+				email := client["email"]
+				enable := client["enable"]
+				totalGB := client["totalGB"]
+
+				// Get real traffic stats
+				var up, down, total int64
+				if traffic, exists := trafficData[email]; exists {
+					if u, ok := traffic["up"].(float64); ok {
+						up = int64(u)
+					}
+					if d, ok := traffic["down"].(float64); ok {
+						down = int64(d)
+					}
+					total = up + down
+					log.Printf("[DEBUG] Client %s traffic: up=%d, down=%d, total=%d", email, up, down, total)
+				} else {
+					log.Printf("[DEBUG] No traffic data for client %s: %v", email, err)
+				}
+
+				// Status icon
+				statusIcon := "🟢"
+			} // Status icon
+			statusIcon := "🟢"
+			if enable == "false" {
+				statusIcon = "🔴"
+			}
+
+			// Traffic percentage if limit is set
+			trafficInfo := ""
+			if totalGB != "0" && totalGB != "" {
+				limitBytes, _ := strconv.ParseFloat(totalGB, 64)
+				limitBytes = limitBytes * 1024 * 1024 * 1024 // Convert GB to bytes
+				percentage := 0.0
+				if limitBytes > 0 {
+					percentage = (float64(total) / limitBytes) * 100
+				}
+
+				percentEmoji := "🟢"
+				if percentage >= 90 {
+					percentEmoji = "🔴"
+				} else if percentage >= 70 {
+					percentEmoji = "🟡"
+				}
+
+				trafficInfo = fmt.Sprintf(" %s %.0f%%", percentEmoji, percentage)
+			} else {
+				// Show total traffic in GB if no limit
+				totalGBFloat := float64(total) / (1024 * 1024 * 1024)
+				trafficInfo = fmt.Sprintf(" 📊 %.2f ГБ", totalGBFloat)
+			}
+
+			// Toggle button text
+			actionText := "✅"
+			if enable != "false" {
+				actionText = "🔒"
+			}
+
+			buttonText := fmt.Sprintf("%s %s%s %s", statusIcon, email, trafficInfo, actionText)
+			button := tu.InlineKeyboardButton(buttonText).
+				WithCallbackData(fmt.Sprintf("toggle_%d_%d", inboundID, i))
+
+			buttons = append(buttons, []telego.InlineKeyboardButton{button})
+		}
+
+		keyboard := &telego.InlineKeyboardMarkup{InlineKeyboard: buttons}
+		inboundMsg := fmt.Sprintf("📡 <b>%s</b>\n\nВыберите клиента для управления:", remark)
+
+		if len(messageID) > 0 {
+			b.editMessage(chatID, messageID[0], inboundMsg, keyboard)
+		} else {
+			b.sendMessageWithInlineKeyboard(chatID, inboundMsg, keyboard)
+		}
+	}
+
+	log.Printf("[INFO] Sent %d clients to user ID: %d", totalClients, chatID)
+}
+
+// handleUsage handles the /usage command
+func (b *Bot) handleUsage(chatID int64, email string, isAdmin bool) {
+	traffic, err := b.apiClient.GetClientTraffics(email)
+	if err != nil {
+		b.sendMessage(chatID, fmt.Sprintf("❌ Failed to get client traffic: %v", err))
+		return
+	}
+
+	// Format usage message
+	msg := fmt.Sprintf("📈 Usage for %s:\n\n", email)
+
+	if up, ok := traffic["up"].(float64); ok {
+		msg += fmt.Sprintf("⬆️ Upload: %.2f GB\n", up/1024/1024/1024)
+	}
+	if down, ok := traffic["down"].(float64); ok {
+		msg += fmt.Sprintf("⬇️ Download: %.2f GB\n", down/1024/1024/1024)
+	}
+	if total, ok := traffic["total"].(float64); ok {
+		msg += fmt.Sprintf("📊 Total: %.2f GB\n", total/1024/1024/1024)
+	}
+
+	b.sendMessage(chatID, msg)
+}
+
+// isAdmin checks if a user is an admin
+func (b *Bot) isAdmin(userID int64) bool {
+	for _, adminID := range b.config.Telegram.AdminIDs {
+		if adminID == userID {
+			return true
+		}
+	}
+	return false
+}
+
+// sendMessage sends a text message
+func (b *Bot) sendMessage(chatID int64, text string) {
+	_, err := b.bot.SendMessage(context.Background(), &telego.SendMessageParams{
+		ChatID:    tu.ID(chatID),
+		Text:      text,
+		ParseMode: "HTML",
+	})
+	if err != nil {
+		log.Printf("[ERROR] Failed to send message to %d: %v", chatID, err)
+	}
+}
+
+// sendMessageWithKeyboard sends a message with keyboard
+func (b *Bot) sendMessageWithKeyboard(chatID int64, text string, keyboard *telego.ReplyKeyboardMarkup) {
+	_, err := b.bot.SendMessage(context.Background(), &telego.SendMessageParams{
+		ChatID:      tu.ID(chatID),
+		Text:        text,
+		ParseMode:   "HTML",
+		ReplyMarkup: keyboard,
+	})
+	if err != nil {
+		log.Printf("[ERROR] Failed to send message with keyboard to %d: %v", chatID, err)
+	}
+}
+
+// sendMessageWithInlineKeyboard sends a message with inline keyboard
+func (b *Bot) sendMessageWithInlineKeyboard(chatID int64, text string, keyboard *telego.InlineKeyboardMarkup) {
+	_, err := b.bot.SendMessage(context.Background(), &telego.SendMessageParams{
+		ChatID:      tu.ID(chatID),
+		Text:        text,
+		ParseMode:   "HTML",
+		ReplyMarkup: keyboard,
+	})
+	if err != nil {
+		log.Printf("[ERROR] Failed to send message with inline keyboard to %d: %v", chatID, err)
+	}
+}
+
+// editMessage edits an existing message
+func (b *Bot) editMessage(chatID int64, messageID int, text string, keyboard *telego.InlineKeyboardMarkup) {
+	_, err := b.bot.EditMessageText(context.Background(), &telego.EditMessageTextParams{
+		ChatID:      tu.ID(chatID),
+		MessageID:   messageID,
+		Text:        text,
+		ParseMode:   "HTML",
+		ReplyMarkup: keyboard,
+	})
+	if err != nil {
+		log.Printf("[ERROR] Failed to edit message %d in chat %d: %v", messageID, chatID, err)
+	}
+}
+
+// parseClients parses clients from inbound settings JSON
+func (b *Bot) parseClients(settingsStr string) []map[string]string {
+	var clients []map[string]string
+
+	if settingsStr == "" {
+		return clients
+	}
+
+	var settings map[string]interface{}
+	if err := json.Unmarshal([]byte(settingsStr), &settings); err != nil {
+		log.Printf("[ERROR] Failed to parse settings JSON: %v", err)
+		return clients
+	}
+
+	// Get clients array
+	clientsArray, ok := settings["clients"].([]interface{})
+	if !ok {
+		return clients
+	}
+
+	for _, c := range clientsArray {
+		clientMap, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		client := make(map[string]string)
+
+		// Store raw JSON for API updates
+		clientJSON, _ := json.Marshal(clientMap)
+		client["_raw_json"] = string(clientJSON)
+
+		// Email
+		if email, ok := clientMap["email"].(string); ok {
+			client["email"] = email
+		}
+
+		// ID (uuid for vless/vmess, password for trojan)
+		if id, ok := clientMap["id"].(string); ok {
+			client["id"] = id
+		}
+
+		// Total traffic limit (in GB)
+		if totalGB, ok := clientMap["totalGB"].(float64); ok {
+			client["totalGB"] = fmt.Sprintf("%.0f", totalGB)
+		} else {
+			client["totalGB"] = "0"
+		}
+
+		// Expiry time
+		if expiryTime, ok := clientMap["expiryTime"].(float64); ok {
+			client["expiryTime"] = fmt.Sprintf("%.0f", expiryTime)
+		} else {
+			client["expiryTime"] = "0"
+		}
+
+		// Enable status
+		if enable, ok := clientMap["enable"].(bool); ok {
+			client["enable"] = fmt.Sprintf("%t", enable)
+		} else {
+			client["enable"] = "true"
+		}
+
+		// Traffic stats - default to 0
+		client["up"] = "0"
+		client["down"] = "0"
+		client["total"] = "0"
+
+		clients = append(clients, client)
+	}
+
+	return clients
+}
+
+// formatBytes formats bytes to human readable string
+func (b *Bot) formatBytes(value interface{}) string {
+	var bytes float64
+
+	switch v := value.(type) {
+	case string:
+		if v == "" {
+			return "0 B"
+		}
+		parsed, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return "0 B"
+		}
+		bytes = parsed
+	case float64:
+		bytes = v
+	case int:
+		bytes = float64(v)
+	case int64:
+		bytes = float64(v)
+	default:
+		return "0 B"
+	}
+
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%.0f B", bytes)
+	}
+
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+
+	units := []string{"KB", "MB", "GB", "TB"}
+	return fmt.Sprintf("%.2f %s", bytes/float64(div), units[exp])
+}
+
+// formatTimestamp formats Unix timestamp to readable date
+func (b *Bot) formatTimestamp(value interface{}) string {
+	var timestamp int64
+
+	switch v := value.(type) {
+	case string:
+		if v == "" || v == "0" {
+			return "∞"
+		}
+		parsed, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return "∞"
+		}
+		timestamp = parsed
+	case float64:
+		timestamp = int64(v)
+	case int64:
+		timestamp = v
+	case int:
+		timestamp = int64(v)
+	default:
+		return "∞"
+	}
+
+	if timestamp == 0 {
+		return "∞"
+	}
+
+	t := time.Unix(timestamp/1000, 0)
+	return t.Format("02.01.2006 15:04")
+}
+
+// handleEnableClient enables a client
+func (b *Bot) handleEnableClient(inboundID int, email string, client map[string]string) error {
+	log.Printf("[INFO] Enabling client: %s (inbound: %d)", email, inboundID)
+
+	// Parse raw JSON and update enable field
+	rawJSON := client["_raw_json"]
+	var clientData map[string]interface{}
+	if err := json.Unmarshal([]byte(rawJSON), &clientData); err != nil {
+		return fmt.Errorf("failed to parse client data: %w", err)
+	}
+
+	// Update enable field
+	clientData["enable"] = true
+
+	// Fix numeric fields - convert float64 to int64 for timestamps
+	b.fixNumericFields(clientData)
+
+	clientID := client["id"]
+	if clientID == "" {
+		clientID = email
+	}
+
+	return b.apiClient.UpdateClient(inboundID, clientID, clientData)
+}
+
+// handleDisableClient disables a client
+func (b *Bot) handleDisableClient(inboundID int, email string, client map[string]string) error {
+	log.Printf("[INFO] Disabling client: %s (inbound: %d)", email, inboundID)
+
+	// Parse raw JSON and update enable field
+	rawJSON := client["_raw_json"]
+	var clientData map[string]interface{}
+	if err := json.Unmarshal([]byte(rawJSON), &clientData); err != nil {
+		return fmt.Errorf("failed to parse client data: %w", err)
+	}
+
+	// Update enable field
+	clientData["enable"] = false
+
+	// Fix numeric fields - convert float64 to int64 for timestamps
+	b.fixNumericFields(clientData)
+
+	clientID := client["id"]
+	if clientID == "" {
+		clientID = email
+	}
+
+	return b.apiClient.UpdateClient(inboundID, clientID, clientData)
+}
+
+// fixNumericFields converts float64 to int64 for specific fields to avoid scientific notation
+func (b *Bot) fixNumericFields(data map[string]interface{}) {
+	numericFields := []string{"expiryTime", "totalGB", "reset", "limitIp", "tgId", "created_at", "updated_at"}
+	for _, field := range numericFields {
+		if val, ok := data[field].(float64); ok {
+			data[field] = int64(val)
+		}
+	}
+}
