@@ -1,0 +1,11 @@
+telegram:
+  token: "YOUR_BOT_TOKEN_HERE"
+  admin_ids:
+    - 123456789  # Replace with your Telegram user ID
+  proxy: ""
+  api_server: ""
+
+panel:
+  url: "https://your-panel-url.com"
+  username: "admin"
+  password: "your_password"

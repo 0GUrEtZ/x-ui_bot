@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -305,26 +306,82 @@ func (c *APIClient) GetClientTrafficsById(inboundID int) ([]map[string]interface
 	return result.Obj, nil
 }
 
-// UpdateClient updates a client configuration
+// UpdateClient updates an existing client in an inbound
 func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[string]interface{}) error {
 	fmt.Printf("[DEBUG] Updating client %s in inbound %d\n", clientID, inboundID)
 	fmt.Printf("[DEBUG] Client data: %+v\n", clientData)
 
-	// Convert client data to JSON for embedding in clients array
-	clientJSON, err := json.Marshal(clientData)
+	// Get current inbound data
+	inbounds, err := c.GetInbounds()
 	if err != nil {
-		fmt.Printf("[ERROR] Failed to marshal client data: %v\n", err)
-		return fmt.Errorf("failed to marshal client data: %w", err)
+		return fmt.Errorf("failed to get inbounds: %w", err)
 	}
 
-	// Format as '{"clients": [clientJSON]}' - this is what 3x-ui expects
-	settingsString := fmt.Sprintf(`{"clients": [%s]}`, string(clientJSON))
-	fmt.Printf("[DEBUG] Settings string: %s\n", settingsString)
+	var targetInbound map[string]interface{}
+	for _, inbound := range inbounds {
+		if int(inbound["id"].(float64)) == inboundID {
+			targetInbound = inbound
+			break
+		}
+	}
+
+	if targetInbound == nil {
+		return fmt.Errorf("inbound %d not found", inboundID)
+	}
+
+	// Parse current settings
+	settingsStr, ok := targetInbound["settings"].(string)
+	if !ok {
+		return fmt.Errorf("invalid settings format")
+	}
+
+	var settings map[string]interface{}
+	if err := json.Unmarshal([]byte(settingsStr), &settings); err != nil {
+		return fmt.Errorf("failed to parse settings: %w", err)
+	}
+
+	clientsArray, ok := settings["clients"].([]interface{})
+	if !ok {
+		return fmt.Errorf("clients array not found")
+	}
+
+	// Find and update the target client
+	found := false
+	for i, cl := range clientsArray {
+		clientMap, ok := cl.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		if email, ok := clientMap["email"].(string); ok && email == clientID {
+			// Merge new data with existing client data (preserve other fields)
+			for key, value := range clientData {
+				clientMap[key] = value
+			}
+			clientsArray[i] = clientMap
+			found = true
+			fmt.Printf("[DEBUG] Found and updated client at index %d\n", i)
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("client %s not found in inbound", clientID)
+	}
+
+	// Update settings with modified clients array
+	settings["clients"] = clientsArray
+
+	// Convert back to JSON string
+	settingsJSON, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("failed to marshal settings: %w", err)
+	}
 
 	// Prepare request data
 	data := map[string]interface{}{
 		"id":       inboundID,
-		"settings": settingsString,
+		"settings": string(settingsJSON),
 	}
 
 	fmt.Printf("[DEBUG] Sending POST to /panel/api/inbounds/updateClient/%s\n", clientID)
@@ -372,6 +429,54 @@ func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[
 	}
 
 	fmt.Printf("[DEBUG] Client updated successfully\n")
+	return nil
+}
+
+// DeleteClient deletes a client from an inbound
+func (c *APIClient) DeleteClient(inboundID int, clientID string) error {
+	fmt.Printf("[DEBUG] Deleting client %s from inbound %d\n", clientID, inboundID)
+
+	data := map[string]interface{}{
+		"id":    inboundID,
+		"email": clientID,
+	}
+
+	resp, err := c.doRequest("POST", fmt.Sprintf("/panel/api/inbounds/%d/delClient/%s", inboundID, clientID), data, true)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		if err := c.Login(); err != nil {
+			return fmt.Errorf("re-login failed: %w", err)
+		}
+		return c.DeleteClient(inboundID, clientID)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Success bool   `json:"success"`
+		Msg     string `json:"msg"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if !result.Success {
+		return fmt.Errorf("API returned success=false: %s", result.Msg)
+	}
+
+	fmt.Printf("[DEBUG] Client deleted successfully\n")
 	return nil
 }
 
@@ -475,34 +580,198 @@ func (c *APIClient) GetClientByTgID(tgID int64) (map[string]interface{}, error) 
 	return nil, fmt.Errorf("client not found")
 }
 
+// GetPanelSettings returns the panel settings including subscription configuration
+func (c *APIClient) GetPanelSettings() (map[string]interface{}, error) {
+	resp, err := c.doRequest("POST", "/panel/setting/all", nil, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get panel settings: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get settings, status: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var result struct {
+		Success bool                   `json:"success"`
+		Obj     map[string]interface{} `json:"obj"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if !result.Success {
+		return nil, fmt.Errorf("API returned success=false")
+	}
+
+	return result.Obj, nil
+}
+
 // GetClientLink returns the subscription link for a specific client email
 func (c *APIClient) GetClientLink(email string) (string, error) {
-	// Get all inbounds to find the client
+	// Try to get the link directly from API
+	fmt.Printf("[DEBUG] Trying to get subscription link for email: %s\n", email)
+	resp, err := c.doRequest("GET", fmt.Sprintf("/panel/api/inbounds/getClientLink/%s", email), nil, true)
+	if err == nil {
+		defer resp.Body.Close()
+
+		fmt.Printf("[DEBUG] getClientLink API response status: %d\n", resp.StatusCode)
+		if resp.StatusCode == http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			fmt.Printf("[DEBUG] getClientLink API response body: %s\n", string(body))
+			var result struct {
+				Success bool   `json:"success"`
+				Obj     string `json:"obj"`
+			}
+			if json.Unmarshal(body, &result) == nil && result.Success && result.Obj != "" {
+				fmt.Printf("[DEBUG] Got subscription link from API: %s\n", result.Obj)
+				return result.Obj, nil
+			}
+		}
+	} else {
+		fmt.Printf("[DEBUG] Error calling getClientLink API: %v\n", err)
+	}
+
+	// Fallback: construct link manually using panel settings
+	fmt.Printf("[DEBUG] Constructing subscription link manually\n")
+
+	// Get panel settings to find subURI
+	panelSettings, err := c.GetPanelSettings()
+	if err != nil {
+		return "", fmt.Errorf("failed to get panel settings: %w", err)
+	}
+
+	// Find the client to get their subId
 	inbounds, err := c.GetInbounds()
 	if err != nil {
 		return "", fmt.Errorf("failed to get inbounds: %w", err)
 	}
 
-	// Find the inbound containing this client
+	var clientSubID string
+	// Find the client in inbounds
 	for _, inbound := range inbounds {
-		inboundID := int(inbound["id"].(float64))
-
-		// Get clients for this inbound
-		clients, err := c.GetClientTraffics(email)
-		if err != nil {
+		settingsStr, ok := inbound["settings"].(string)
+		if !ok {
 			continue
 		}
 
-		// If client found in this inbound, construct subscription link
-		if len(clients) > 0 {
-			// Subscription link format: {baseURL}/sub/{inboundID}/{email}
-			subLink := fmt.Sprintf("%s/sub/%d/%s", c.baseURL, inboundID, email)
-			return subLink, nil
+		var inboundSettings map[string]interface{}
+		if err := json.Unmarshal([]byte(settingsStr), &inboundSettings); err != nil {
+			continue
+		}
+
+		clientsArray, ok := inboundSettings["clients"].([]interface{})
+		if !ok {
+			continue
+		}
+
+		// Find the client by email
+		for _, client := range clientsArray {
+			clientMap, ok := client.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			if clientEmail, ok := clientMap["email"].(string); ok && clientEmail == email {
+				// Found the client! Get their subId
+				if subId, ok := clientMap["subId"].(string); ok && subId != "" {
+					clientSubID = subId
+					fmt.Printf("[DEBUG] Found client subId: %s\n", clientSubID)
+					break
+				}
+			}
+		}
+		if clientSubID != "" {
+			break
 		}
 	}
 
-	return "", fmt.Errorf("client not found")
-} // toJSON converts a map to JSON string
+	if clientSubID == "" {
+		return "", fmt.Errorf("client has no subId")
+	}
+
+	// Get subURI from panel settings (this is the subscription server URL)
+	subURI := ""
+	if uri, ok := panelSettings["subURI"].(string); ok && uri != "" {
+		subURI = strings.TrimSuffix(uri, "/")
+		fmt.Printf("[DEBUG] Found subURI from panel settings: %s\n", subURI)
+
+		// If subURI is complete (includes path), just append clientSubID
+		// subURI format: https://subscribe.domain.com:port/path or https://subscribe.domain.com:port
+		subURL := fmt.Sprintf("%s/%s", subURI, clientSubID)
+		fmt.Printf("[DEBUG] Built subscription URL from subURI: %s\n", subURL)
+		return subURL, nil
+	}
+
+	// If no subURI configured, build from subDomain + subPort + subPath
+	subDomain := ""
+	if domain, ok := panelSettings["subDomain"].(string); ok && domain != "" {
+		subDomain = domain
+	}
+
+	subPort := 0
+	if port, ok := panelSettings["subPort"].(float64); ok {
+		subPort = int(port)
+	}
+
+	subKeyFile := ""
+	if keyFile, ok := panelSettings["subKeyFile"].(string); ok {
+		subKeyFile = keyFile
+	}
+
+	subCertFile := ""
+	if certFile, ok := panelSettings["subCertFile"].(string); ok {
+		subCertFile = certFile
+	}
+
+	// Get subPath from panel settings or use default
+	subPath := "/sub/"
+	if path, ok := panelSettings["subPath"].(string); ok && path != "" {
+		subPath = path
+		// Ensure path format
+		if !strings.HasPrefix(subPath, "/") {
+			subPath = "/" + subPath
+		}
+		if !strings.HasSuffix(subPath, "/") {
+			subPath = subPath + "/"
+		}
+	}
+
+	// Determine scheme
+	scheme := "http"
+	if subKeyFile != "" && subCertFile != "" {
+		scheme = "https"
+	}
+
+	// Build URL from domain + port + path
+	if subDomain != "" {
+		var baseURL string
+		if (scheme == "https" && subPort == 443) || (scheme == "http" && subPort == 80) {
+			baseURL = fmt.Sprintf("%s://%s", scheme, subDomain)
+		} else if subPort > 0 {
+			baseURL = fmt.Sprintf("%s://%s:%d", scheme, subDomain, subPort)
+		} else {
+			baseURL = fmt.Sprintf("%s://%s", scheme, subDomain)
+		}
+
+		subURL := fmt.Sprintf("%s%s%s", baseURL, subPath, clientSubID)
+		fmt.Printf("[DEBUG] Built subscription URL from domain/port/path: %s\n", subURL)
+		return subURL, nil
+	}
+
+	// Use baseURL as fallback
+	subURL := fmt.Sprintf("%s%s%s", c.baseURL, subPath, clientSubID)
+	fmt.Printf("[DEBUG] Built subscription URL (fallback): %s\n", subURL)
+	return subURL, nil
+}
+
+// toJSON converts a map to JSON string
 func toJSON(data interface{}) string {
 	b, _ := json.Marshal(data)
 	return string(b)

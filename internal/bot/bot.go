@@ -14,11 +14,23 @@ import (
 	"x-ui-bot/internal/config"
 	"x-ui-bot/pkg/client"
 
+	"math/rand"
+
 	"github.com/google/uuid"
 	"github.com/mymmrac/telego"
 	th "github.com/mymmrac/telego/telegohandler"
 	tu "github.com/mymmrac/telego/telegoutil"
 )
+
+// generateRandomString generates a random string of lowercase letters and numbers
+func generateRandomString(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[rand.Intn(len(charset))]
+	}
+	return string(b)
+}
 
 // RegistrationRequest represents a user registration request
 type RegistrationRequest struct {
@@ -255,14 +267,24 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 			return nil
 		}
 		b.sendMessage(chatID, "🔍 Введите email клиента или используйте команду:\n/usage &lt;email&gt;")
-	case "📝 Зарегистрироваться":
-		b.handleRegistrationStart(chatID, userID, message.From.FirstName)
-	case "🔗 Получить Subscription Link":
-		b.handleGetSubscriptionLink(chatID, userID)
-	case "🔄 Продлить подписку":
-		b.handleExtendSubscription(chatID, userID)
-	case "ℹ️ Помощь":
-		b.handleHelp(chatID)
+	default:
+		// Handle buttons with emoji (encoding issues)
+		if strings.Contains(message.Text, "Зарегистрироваться") {
+			// Use username if available, otherwise use firstName
+			userName := message.From.Username
+			if userName == "" {
+				userName = message.From.FirstName
+			}
+			b.handleRegistrationStart(chatID, userID, userName)
+		} else if strings.Contains(message.Text, "Получить VPN") {
+			b.handleGetSubscriptionLink(chatID, userID)
+		} else if strings.Contains(message.Text, "Статус подписки") {
+			b.handleSubscriptionStatus(chatID, userID)
+		} else if strings.Contains(message.Text, "Продлить подписку") {
+			b.handleExtendSubscription(chatID, userID)
+		} else if strings.Contains(message.Text, "Помощь") {
+			b.handleHelp(chatID)
+		}
 	}
 
 	return nil
@@ -443,39 +465,57 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 				expiryTime = int64(et)
 			}
 
-			// Calculate days remaining
+			// Calculate days remaining (round up to include partial days)
 			daysRemaining := 0
 			if expiryTime > 0 {
 				remainingMs := expiryTime - time.Now().UnixMilli()
 				if remainingMs > 0 {
-					daysRemaining = int(remainingMs / (1000 * 60 * 60 * 24))
+					// Round up: if there are any hours left, count as a full day
+					daysRemaining = int((remainingMs + (1000 * 60 * 60 * 24) - 1) / (1000 * 60 * 60 * 24))
 				}
 			}
 
 			statusIcon := "✅"
 			statusText := fmt.Sprintf("%d дней", daysRemaining)
-			if daysRemaining <= 0 {
+			if expiryTime == 0 {
+				// Unlimited subscription
+				statusIcon = "♾️"
+				statusText = "Безлимитная"
+			} else if daysRemaining <= 0 {
 				statusIcon = "❌"
 				statusText = "Истекла"
 			} else if daysRemaining <= 7 {
 				statusIcon = "⚠️"
 			}
 
-			msg += fmt.Sprintf("📧 Email: %s\n", html.EscapeString(email))
+			msg += fmt.Sprintf("� Аккаунт: %s\n", html.EscapeString(email))
 			msg += fmt.Sprintf("%s Подписка: %s\n\n", statusIcon, statusText)
 			msg += "Выберите действие:"
 
-			keyboard := tu.Keyboard(
-				tu.KeyboardRow(
-					tu.KeyboardButton("� Получить Subscription Link"),
-				),
-				tu.KeyboardRow(
-					tu.KeyboardButton("🔄 Продлить подписку"),
-				),
-				tu.KeyboardRow(
-					tu.KeyboardButton("ℹ️ Помощь"),
-				),
-			).WithResizeKeyboard().WithIsPersistent()
+			// Build keyboard based on subscription type
+			var keyboard *telego.ReplyKeyboardMarkup
+			if expiryTime == 0 {
+				// Unlimited subscription - no extend button
+				keyboard = tu.Keyboard(
+					tu.KeyboardRow(
+						tu.KeyboardButton("📱 Получить VPN"),
+					),
+					tu.KeyboardRow(
+						tu.KeyboardButton("📊 Статус подписки"),
+					),
+				).WithResizeKeyboard().WithIsPersistent()
+			} else {
+				// Limited subscription - show extend button
+				keyboard = tu.Keyboard(
+					tu.KeyboardRow(
+						tu.KeyboardButton("📱 Получить VPN"),
+					),
+					tu.KeyboardRow(
+						tu.KeyboardButton("📊 Статус подписки"),
+						tu.KeyboardButton("🔄 Продлить подписку"),
+					),
+				).WithResizeKeyboard().WithIsPersistent()
+			}
 
 			b.sendMessageWithKeyboard(chatID, msg, keyboard)
 		} else {
@@ -484,10 +524,7 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 
 			keyboard := tu.Keyboard(
 				tu.KeyboardRow(
-					tu.KeyboardButton("�📝 Зарегистрироваться"),
-				),
-				tu.KeyboardRow(
-					tu.KeyboardButton("ℹ️ Помощь"),
+					tu.KeyboardButton("📝 Зарегистрироваться"),
 				),
 			).WithResizeKeyboard().WithIsPersistent()
 
@@ -1153,6 +1190,13 @@ func (b *Bot) handleRegistrationEmail(chatID int64, userID int64, email string) 
 		return
 	}
 
+	// Validate email - check if not empty and doesn't contain button text
+	email = strings.TrimSpace(email)
+	if email == "" || strings.Contains(strings.ToLower(email), "зарегистрироваться") {
+		b.sendMessage(chatID, "❌ Username не может быть пустым.\n\n📧 Введите корректный email (логин):")
+		return
+	}
+
 	req.Email = email
 	req.Status = "input_duration"
 	b.userStates[chatID] = "awaiting_duration"
@@ -1168,7 +1212,7 @@ func (b *Bot) handleRegistrationEmail(chatID int64, userID int64, email string) 
 		),
 	)
 
-	msg := fmt.Sprintf("✅ Email: %s\n\n🔹 Шаг 2/2: Выберите срок действия:", email)
+	msg := fmt.Sprintf("✅ Username: %s\n\n🔹 Шаг 2/2: Выберите срок действия:", email)
 	b.bot.SendMessage(context.Background(), tu.Message(tu.ID(chatID), msg).WithReplyMarkup(keyboard))
 }
 
@@ -1200,7 +1244,7 @@ func (b *Bot) sendRegistrationRequestToAdmins(req *RegistrationRequest) {
 	msg := fmt.Sprintf(
 		"📝 <b>Новая заявка на регистрацию</b>\n\n"+
 			"👤 Пользователь: %s (ID: %d)\n"+
-			"📧 Email: %s\n"+
+			"📧 Username: %s\n"+
 			"📅 Срок: %d дней\n"+
 			"🕐 Время: %s",
 		html.EscapeString(req.Username),
@@ -1255,9 +1299,9 @@ func (b *Bot) handleRegistrationDecision(requestUserID int64, adminChatID int64,
 		// Notify user with subscription link
 		userMsg := fmt.Sprintf(
 			"✅ <b>Ваша заявка одобрена!</b>\n\n"+
-				"📧 Email: %s\n"+
+				"👤 Аккаунт: %s\n"+
 				"📅 Срок: %d дней\n\n"+
-				"🔗 <b>Subscription Link:</b>\n"+
+				"🔗 <b>Ваша VPN конфигурация:</b>\n"+
 				"<code>%s</code>\n\n"+
 				"Скопируйте эту ссылку и добавьте её в ваше VPN приложение.",
 			html.EscapeString(req.Email),
@@ -1266,11 +1310,15 @@ func (b *Bot) handleRegistrationDecision(requestUserID int64, adminChatID int64,
 		)
 		b.sendMessage(req.UserID, userMsg)
 
+		// Show main menu to the user after successful registration
+		time.Sleep(1 * time.Second) // Small delay for better UX
+		b.handleStart(req.UserID, req.Username, false)
+
 		// Update admin message
 		adminMsg := fmt.Sprintf(
 			"✅ <b>Заявка ОДОБРЕНА</b>\n\n"+
 				"👤 Пользователь: %s (ID: %d)\n"+
-				"📧 Email: %s\n"+
+				"📧 Username: %s\n"+
 				"📅 Срок: %d дней",
 			html.EscapeString(req.Username),
 			req.UserID,
@@ -1291,7 +1339,7 @@ func (b *Bot) handleRegistrationDecision(requestUserID int64, adminChatID int64,
 		adminMsg := fmt.Sprintf(
 			"❌ <b>Заявка ОТКЛОНЕНА</b>\n\n"+
 				"👤 Пользователь: %s (ID: %d)\n"+
-				"📧 Email: %s\n"+
+				"📧 Username: %s\n"+
 				"📅 Срок: %d дней",
 			html.EscapeString(req.Username),
 			req.UserID,
@@ -1303,10 +1351,14 @@ func (b *Bot) handleRegistrationDecision(requestUserID int64, adminChatID int64,
 		log.Printf("[INFO] Registration rejected for user %d, email: %s", requestUserID, req.Email)
 	}
 
-	// Clean up old requests
+	// Clean up old requests and states
 	b.registrationMutex.Lock()
 	delete(b.registrationReqs, requestUserID)
 	b.registrationMutex.Unlock()
+
+	// Clear FSM state for user
+	delete(b.userStates, requestUserID)
+	log.Printf("[DEBUG] Cleared FSM state for user %d", requestUserID)
 }
 
 // createClientForRequest creates a new client based on registration request
@@ -1325,18 +1377,57 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 	firstInbound := inbounds[0]
 	inboundID := int(firstInbound["id"].(float64))
 
+	// Get protocol
+	protocol := ""
+	if p, ok := firstInbound["protocol"].(string); ok {
+		protocol = p
+	}
+
 	// Calculate expiry time
 	expiryTime := time.Now().Add(time.Duration(req.Duration) * 24 * time.Hour).UnixMilli()
 
-	// Create client data
+	// Generate subscription ID (16 lowercase alphanumeric characters)
+	subID := generateRandomString(16)
+
+	// Create client data based on protocol
 	clientData := map[string]interface{}{
-		"id":         uuid.New().String(),
 		"email":      req.Email,
 		"enable":     true,
 		"expiryTime": expiryTime,
 		"totalGB":    0, // Unlimited
 		"tgId":       req.UserID,
+		"subId":      subID,
 		"limitIp":    1,
+		"comment":    "",
+		"reset":      0,
+	}
+
+	// Add protocol-specific fields
+	switch protocol {
+	case "vmess":
+		clientData["id"] = uuid.New().String()
+		clientData["security"] = "auto"
+	case "vless":
+		clientData["id"] = uuid.New().String()
+		clientData["flow"] = ""
+	case "trojan":
+		clientData["password"] = generateRandomString(10)
+	case "shadowsocks":
+		// Get method from inbound settings
+		settingsStr, _ := firstInbound["settings"].(string)
+		var settings map[string]interface{}
+		method := "aes-256-gcm" // default
+		if json.Unmarshal([]byte(settingsStr), &settings) == nil {
+			if m, ok := settings["method"].(string); ok {
+				method = m
+			}
+		}
+		clientData["method"] = method
+		clientData["password"] = generateRandomString(16)
+	default:
+		// Fallback to VLESS-like
+		clientData["id"] = uuid.New().String()
+		clientData["flow"] = ""
 	}
 
 	// Add client via API
@@ -1360,7 +1451,9 @@ func (b *Bot) handleGetSubscriptionLink(chatID int64, userID int64) {
 	// Get client info
 	clientInfo, err := b.apiClient.GetClientByTgID(userID)
 	if err != nil {
-		b.sendMessage(chatID, "❌ Вы не зарегистрированы. Используйте кнопку '📝 Зарегистрироваться'")
+		b.sendMessage(chatID, "❌ Вы не зарегистрированы.\n\nДля получения VPN необходимо зарегистрироваться.")
+		// Start registration process
+		b.handleRegistrationStart(chatID, userID, "")
 		return
 	}
 
@@ -1383,19 +1476,135 @@ func (b *Bot) handleGetSubscriptionLink(chatID int64, userID int64) {
 	}
 
 	msg := fmt.Sprintf(
-		"🔗 <b>Ваша Subscription Link:</b>\n\n"+
+		"� <b>Ваш VPN конфигурация:</b>\n\n"+
 			"<code>%s</code>\n\n"+
-			"📱 Скопируйте эту ссылку и добавьте её в ваше VPN приложение:\n"+
-			"• V2rayNG (Android)\n"+
-			"• V2rayN (Windows)\n"+
-			"• Streisand (iOS)\n"+
-			"• Nekoray (Windows/Linux)\n\n"+
-			"ℹ️ Используйте опцию 'Импорт по ссылке' или 'Subscription'",
+			"� <b>Как подключиться:</b>\n"+
+			"1. Скопируйте ссылку выше\n"+
+			"2. Откройте VPN приложение:\n"+
+			"   • V2rayNG (Android)\n"+
+			"   • V2rayN (Windows)\n"+
+			"   • Streisand (iOS)\n"+
+			"   • Nekoray (Windows/Linux)\n"+
+			"3. Используйте 'Импорт по ссылке' или 'Subscription'\n\n"+
+			"✅ Подключение готово к использованию!",
 		html.EscapeString(subLink),
 	)
 
 	b.sendMessage(chatID, msg)
-	log.Printf("[INFO] Sent subscription link to user %d", userID)
+	log.Printf("[INFO] Sent VPN config to user %d", userID)
+}
+
+// handleSubscriptionStatus shows detailed subscription status to user
+func (b *Bot) handleSubscriptionStatus(chatID int64, userID int64) {
+	log.Printf("[INFO] User %d requested subscription status", userID)
+
+	// Get client info
+	clientInfo, err := b.apiClient.GetClientByTgID(userID)
+	if err != nil {
+		b.sendMessage(chatID, "❌ У вас нет активной подписки.\n\nДля получения VPN используйте кнопку '📱 Получить VPN'")
+		return
+	}
+
+	email := ""
+	if e, ok := clientInfo["email"].(string); ok {
+		email = e
+	}
+
+	expiryTime := int64(0)
+	if et, ok := clientInfo["expiryTime"].(float64); ok {
+		expiryTime = int64(et)
+	}
+
+	// Calculate days remaining (round up to include partial days)
+	daysRemaining := 0
+	hoursRemaining := 0
+	if expiryTime > 0 {
+		remainingMs := expiryTime - time.Now().UnixMilli()
+		if remainingMs > 0 {
+			totalHours := remainingMs / (1000 * 60 * 60)
+			daysRemaining = int((remainingMs + (1000 * 60 * 60 * 24) - 1) / (1000 * 60 * 60 * 24))
+			hoursRemaining = int(totalHours % 24)
+		}
+	}
+
+	// Get traffic stats
+	var up, down, total int64
+	traffic, err := b.apiClient.GetClientTraffics(email)
+	if err == nil && traffic != nil {
+		if u, ok := traffic["up"].(float64); ok {
+			up = int64(u)
+		}
+		if d, ok := traffic["down"].(float64); ok {
+			down = int64(d)
+		}
+		total = up + down
+	}
+
+	// Status icon and text
+	statusIcon := "✅"
+	statusText := "Активна"
+	var msg string
+
+	if expiryTime == 0 {
+		// Unlimited subscription
+		statusIcon = "♾️"
+		statusText = "Безлимитная"
+		msg = fmt.Sprintf(
+			"📊 <b>Статус подписки</b>\n\n"+
+				"👤 Аккаунт: %s\n"+
+				"%s Статус: %s\n"+
+				"⏰ Истекает: ∞ (бессрочно)\n\n"+
+				"📈 <b>Трафик:</b>\n"+
+				"⬆️ Отправлено: %s\n"+
+				"⬇️ Получено: %s\n"+
+				"📊 Всего: %s",
+			html.EscapeString(email),
+			statusIcon,
+			statusText,
+			b.formatBytes(up),
+			b.formatBytes(down),
+			b.formatBytes(total),
+		)
+	} else {
+		// Limited subscription
+		if daysRemaining <= 0 {
+			statusIcon = "❌"
+			statusText = "Истекла"
+		} else if daysRemaining <= 3 {
+			statusIcon = "🔴"
+			statusText = "Заканчивается"
+		} else if daysRemaining <= 7 {
+			statusIcon = "⚠️"
+			statusText = "Скоро истечёт"
+		}
+
+		// Format expiry date
+		expiryDate := time.UnixMilli(expiryTime).Format("02.01.2006 15:04")
+
+		msg = fmt.Sprintf(
+			"📊 <b>Статус подписки</b>\n\n"+
+				"👤 Аккаунт: %s\n"+
+				"%s Статус: %s\n"+
+				"⏰ Истекает: %s\n"+
+				"📅 Осталось: %d дней %d часов\n\n"+
+				"📈 <b>Трафик:</b>\n"+
+				"⬆️ Отправлено: %s\n"+
+				"⬇️ Получено: %s\n"+
+				"📊 Всего: %s",
+			html.EscapeString(email),
+			statusIcon,
+			statusText,
+			expiryDate,
+			daysRemaining,
+			hoursRemaining,
+			b.formatBytes(up),
+			b.formatBytes(down),
+			b.formatBytes(total),
+		)
+	}
+
+	b.sendMessage(chatID, msg)
+	log.Printf("[INFO] Sent subscription status to user %d", userID)
 }
 
 // handleExtendSubscription handles subscription extension request
@@ -1405,13 +1614,25 @@ func (b *Bot) handleExtendSubscription(chatID int64, userID int64) {
 	// Get client info
 	clientInfo, err := b.apiClient.GetClientByTgID(userID)
 	if err != nil {
-		b.sendMessage(chatID, "❌ Вы не зарегистрированы. Используйте кнопку '📝 Зарегистрироваться'")
+		b.sendMessage(chatID, "❌ У вас нет активной подписки.\n\nДля получения VPN используйте кнопку '📱 Получить VPN'")
 		return
 	}
 
 	email := ""
 	if e, ok := clientInfo["email"].(string); ok {
 		email = e
+	}
+
+	// Check if user has unlimited subscription (expiryTime = 0)
+	expiryTime := int64(0)
+	if et, ok := clientInfo["expiryTime"].(float64); ok {
+		expiryTime = int64(et)
+	}
+
+	if expiryTime == 0 {
+		b.sendMessage(chatID, "✅ У вас безлимитная подписка!\n\n∞ Срок действия: бессрочно\n\nПродление не требуется.")
+		log.Printf("[INFO] User %d has unlimited subscription, extension denied", userID)
+		return
 	}
 
 	// Show duration selection keyboard
@@ -1428,7 +1649,7 @@ func (b *Bot) handleExtendSubscription(chatID int64, userID int64) {
 
 	msg := fmt.Sprintf(
 		"🔄 <b>Продление подписки</b>\n\n"+
-			"📧 Email: %s\n\n"+
+			"� Аккаунт: %s\n\n"+
 			"Выберите срок продления:",
 		html.EscapeString(email),
 	)
@@ -1486,7 +1707,7 @@ func (b *Bot) handleExtensionRequest(userID int64, chatID int64, messageID int, 
 	// Update user's message
 	b.editMessageText(chatID, messageID, fmt.Sprintf(
 		"✅ Запрос на продление отправлен администраторам!\n\n"+
-			"📧 Email: %s\n"+
+			"� Аккаунт: %s\n"+
 			"📅 Срок: %d дней\n\n"+
 			"⏳ Ожидайте одобрения...",
 		html.EscapeString(email),
@@ -1517,34 +1738,157 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 		currentExpiry = int64(et)
 	}
 
-	// Calculate new expiry time (add days to current expiry or now if expired)
-	now := time.Now().UnixMilli()
-	var newExpiry int64
-	if currentExpiry > now {
-		// Extend from current expiry
-		newExpiry = currentExpiry + int64(duration)*24*60*60*1000
-	} else {
-		// Extend from now if expired
-		newExpiry = now + int64(duration)*24*60*60*1000
-	}
-
-	// Update client via API
+	// Get inbound ID
 	inboundID := int(clientInfo["_inboundID"].(float64))
 
-	// Prepare updated client data
-	updatedClient := make(map[string]interface{})
-	for k, v := range clientInfo {
-		if k != "_inboundID" {
-			updatedClient[k] = v
+	// Get client UUID and subId (must preserve them)
+	clientUUID := ""
+	if id, ok := clientInfo["id"].(string); ok {
+		clientUUID = id
+	}
+
+	clientSubID := ""
+	if subId, ok := clientInfo["subId"].(string); ok {
+		clientSubID = subId
+	}
+	if clientSubID == "" {
+		// Generate new subId if not exists
+		clientSubID = generateRandomString(16)
+		log.Printf("[INFO] Generated new subId for client: %s", clientSubID)
+	}
+
+	// Delete old client using UUID
+	log.Printf("[DEBUG] Attempting to delete client UUID: %s, email: %s", clientUUID, email)
+	err = b.apiClient.DeleteClient(inboundID, clientUUID)
+	if err != nil {
+		b.sendMessage(adminChatID, fmt.Sprintf("❌ Ошибка при удалении старого клиента: %v", err))
+		log.Printf("[ERROR] Failed to delete client: %v", err)
+		return
+	}
+
+	// Calculate new expiry time: add extension to CURRENT expiry (or to now if expired)
+	now := time.Now().UnixMilli()
+	baseTime := currentExpiry
+	if currentExpiry < now {
+		// If subscription already expired, start from now
+		baseTime = now
+	}
+	newExpiry := baseTime + (int64(duration) * 24 * 60 * 60 * 1000) // Add days in milliseconds
+
+	log.Printf("[INFO] Deleted client %s (UUID: %s), extending from %s by %d days to %s",
+		email, clientUUID,
+		time.UnixMilli(currentExpiry).Format("2006-01-02 15:04:05"),
+		duration,
+		time.UnixMilli(newExpiry).Format("2006-01-02 15:04:05"))
+
+	// Wait for the deletion to be fully processed
+	time.Sleep(5 * time.Second)
+
+	// Verify deletion
+	checkClient, _ := b.apiClient.GetClientByTgID(userID)
+	if checkClient != nil {
+		log.Printf("[WARNING] Client still exists after deletion, waiting additional 5 seconds")
+		time.Sleep(5 * time.Second)
+	}
+
+	// Get inbound to determine protocol
+	inbounds, err := b.apiClient.GetInbounds()
+	if err != nil {
+		b.sendMessage(adminChatID, fmt.Sprintf("❌ Ошибка при получении inbounds: %v", err))
+		return
+	}
+
+	var currentInbound map[string]interface{}
+	for _, inb := range inbounds {
+		if int(inb["id"].(float64)) == inboundID {
+			currentInbound = inb
+			break
 		}
 	}
-	updatedClient["expiryTime"] = newExpiry
 
-	// Update client
-	err = b.apiClient.UpdateClient(inboundID, email, updatedClient)
+	if currentInbound == nil {
+		b.sendMessage(adminChatID, "❌ Ошибка: inbound не найден")
+		return
+	}
+
+	protocol := ""
+	if p, ok := currentInbound["protocol"].(string); ok {
+		protocol = p
+	}
+
+	// Create new client with same UUID/password, subId and extended time
+	newClientData := map[string]interface{}{
+		"email":      email,
+		"enable":     true,
+		"expiryTime": newExpiry,
+		"totalGB":    0, // Unlimited
+		"tgId":       userID,
+		"subId":      clientSubID, // Keep same subId
+		"limitIp":    1,
+		"comment":    "",
+		"reset":      0,
+	}
+
+	// Add protocol-specific fields, preserving existing IDs/passwords
+	switch protocol {
+	case "vmess":
+		if clientUUID != "" {
+			newClientData["id"] = clientUUID // Keep same UUID
+		} else {
+			newClientData["id"] = uuid.New().String()
+		}
+		// Get security from old client or use default
+		if sec, ok := clientInfo["security"].(string); ok {
+			newClientData["security"] = sec
+		} else {
+			newClientData["security"] = "auto"
+		}
+	case "vless":
+		if clientUUID != "" {
+			newClientData["id"] = clientUUID // Keep same UUID
+		} else {
+			newClientData["id"] = uuid.New().String()
+		}
+		// Get flow from old client or use default
+		if flow, ok := clientInfo["flow"].(string); ok {
+			newClientData["flow"] = flow
+		} else {
+			newClientData["flow"] = ""
+		}
+	case "trojan":
+		// Get password from old client or generate new
+		if pass, ok := clientInfo["password"].(string); ok && pass != "" {
+			newClientData["password"] = pass // Keep same password
+		} else {
+			newClientData["password"] = generateRandomString(10)
+		}
+	case "shadowsocks":
+		// Get method from old client
+		if method, ok := clientInfo["method"].(string); ok {
+			newClientData["method"] = method
+		} else {
+			newClientData["method"] = "aes-256-gcm"
+		}
+		// Get password from old client or generate new
+		if pass, ok := clientInfo["password"].(string); ok && pass != "" {
+			newClientData["password"] = pass // Keep same password
+		} else {
+			newClientData["password"] = generateRandomString(16)
+		}
+	default:
+		// Fallback to VLESS-like
+		if clientUUID != "" {
+			newClientData["id"] = clientUUID
+		} else {
+			newClientData["id"] = uuid.New().String()
+		}
+		newClientData["flow"] = ""
+	}
+
+	err = b.apiClient.AddClient(inboundID, newClientData)
 	if err != nil {
-		b.sendMessage(adminChatID, fmt.Sprintf("❌ Ошибка при продлении: %v", err))
-		log.Printf("[ERROR] Failed to extend subscription: %v", err)
+		b.sendMessage(adminChatID, fmt.Sprintf("❌ Ошибка при создании нового клиента: %v", err))
+		log.Printf("[ERROR] Failed to recreate client: %v", err)
 		return
 	}
 
@@ -1555,15 +1899,25 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 		subLink = "Не удалось получить ссылку"
 	}
 
+	// Calculate days for display (from now until new expiry)
+	daysUntilExpiry := int((newExpiry - now) / (1000 * 60 * 60 * 24))
+	oldExpiry := time.UnixMilli(currentExpiry).Format("2006-01-02 15:04:05")
+	newExpiryFormatted := time.UnixMilli(newExpiry).Format("2006-01-02 15:04:05")
+
 	// Notify user
 	userMsg := fmt.Sprintf(
 		"✅ <b>Ваша подписка продлена!</b>\n\n"+
-			"📧 Email: %s\n"+
-			"📅 Продлено на: %d дней\n\n"+
-			"🔗 <b>Subscription Link:</b>\n"+
-			"<code>%s</code>",
+			"👤 Аккаунт: %s\n"+
+			"📅 Продлено на: %d дней\n"+
+			"⏰ Истекает: %s\n"+
+			"📅 Осталось дней: %d\n\n"+
+			"🔗 <b>Ваша VPN конфигурация:</b>\n"+
+			"<code>%s</code>\n\n"+
+			"ℹ️ Ссылка осталась прежней, переподключение не требуется.",
 		html.EscapeString(email),
 		duration,
+		newExpiryFormatted,
+		daysUntilExpiry,
 		html.EscapeString(subLink),
 	)
 	b.sendMessage(userID, userMsg)
@@ -1572,15 +1926,20 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 	adminMsg := fmt.Sprintf(
 		"✅ <b>Продление ОДОБРЕНО</b>\n\n"+
 			"👤 Пользователь ID: %d\n"+
-			"📧 Email: %s\n"+
-			"📅 Продлено на: %d дней",
+			"📧 Username: %s\n"+
+			"⏰ Было до: %s\n"+
+			"📅 Продлено: +%d дней\n"+
+			"⏰ Теперь до: %s",
 		userID,
 		html.EscapeString(email),
+		oldExpiry,
 		duration,
+		newExpiryFormatted,
 	)
 	b.editMessageText(adminChatID, messageID, adminMsg)
 
-	log.Printf("[INFO] Subscription extended for user %d, email: %s, duration: %d days", userID, email, duration)
+	log.Printf("[INFO] Subscription extended for user %d, email: %s, added: %d days, expires: %s",
+		userID, email, duration, newExpiryFormatted)
 }
 
 // handleExtensionRejection processes admin rejection for subscription extension
@@ -1603,7 +1962,7 @@ func (b *Bot) handleExtensionRejection(userID int64, adminChatID int64, messageI
 	adminMsg := fmt.Sprintf(
 		"❌ <b>Продление ОТКЛОНЕНО</b>\n\n"+
 			"👤 Пользователь ID: %d\n"+
-			"📧 Email: %s",
+			"📧 Username: %s",
 		userID,
 		html.EscapeString(email),
 	)
