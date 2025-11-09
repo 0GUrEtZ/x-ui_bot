@@ -456,6 +456,38 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		return nil
 	}
 
+	if strings.HasPrefix(data, "show_id_") {
+		parts := strings.Split(data, "_")
+		if len(parts) == 4 {
+			inboundID, err1 := strconv.Atoi(parts[2])
+			clientIndex, err2 := strconv.Atoi(parts[3])
+
+			if err1 == nil && err2 == nil {
+				cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
+				if clientData, ok := b.clientCache.Load(cacheKey); ok {
+					client := clientData.(map[string]string)
+					email := client["email"]
+					tgId := client["tgId"]
+
+					if tgId != "" && tgId != "0" {
+						b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+							CallbackQueryID: query.ID,
+							Text:            fmt.Sprintf("📋 Telegram ID клиента %s:\n%s\n\nМожете найти в Telegram через @username или ID", email, tgId),
+							ShowAlert:       true,
+						})
+					} else {
+						b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+							CallbackQueryID: query.ID,
+							Text:            "❌ У клиента нет привязанного Telegram ID",
+							ShowAlert:       true,
+						})
+					}
+					return nil
+				}
+			}
+		}
+	}
+
 	// Handle toggle_X_Y buttons
 	if strings.HasPrefix(data, "toggle_") {
 		parts := strings.Split(data, "_")
@@ -931,32 +963,30 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 			toggleButton := tu.InlineKeyboardButton(buttonText).
 				WithCallbackData(fmt.Sprintf("toggle_%d_%d", inboundID, i))
 
-			// Get tgId for chat button
+			// Delete button
+			deleteButton := tu.InlineKeyboardButton("�️ Удалить").
+				WithCallbackData(fmt.Sprintf("delete_%d_%d", inboundID, i))
+
+			// Get tgId for ID button
 			tgIdStr := ""
 			if tgIdVal, ok := client["tgId"]; ok && tgIdVal != "" {
 				tgIdStr = fmt.Sprintf("%v", tgIdVal)
 			}
 
-			// Second row: Chat and Delete buttons
+			// Second row: ID and Delete buttons
 			var secondRow []telego.InlineKeyboardButton
 
-			// Add chat button if tgId exists
+			// Add ID button if tgId exists
 			if tgIdStr != "" && tgIdStr != "0" {
-				tgIDInt, err := strconv.ParseInt(tgIdStr, 10, 64)
-				if err == nil && tgIDInt > 0 {
-					chatButton := tu.InlineKeyboardButton("💬 Чат").
-						WithURL(fmt.Sprintf("tg://user?id=%d", tgIDInt))
-					secondRow = append(secondRow, chatButton)
-					log.Printf("[DEBUG] Added chat button for client %s with tgId %d", email, tgIDInt)
-				}
+				idButton := tu.InlineKeyboardButton("📋 ID").
+					WithCallbackData(fmt.Sprintf("show_id_%d_%d", inboundID, i))
+				secondRow = append(secondRow, idButton)
 			}
 
 			// Add delete button
-			deleteButton := tu.InlineKeyboardButton("🗑️").
-				WithCallbackData(fmt.Sprintf("delete_%d_%d", inboundID, i))
 			secondRow = append(secondRow, deleteButton)
 
-			// Add buttons in rows (vertical layout with chat+delete in one row)
+			// Add buttons in rows (vertical layout)
 			buttons = append(buttons, []telego.InlineKeyboardButton{toggleButton})
 			if len(secondRow) > 0 {
 				buttons = append(buttons, secondRow)
