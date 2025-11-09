@@ -932,18 +932,22 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 				WithCallbackData(fmt.Sprintf("toggle_%d_%d", inboundID, i))
 
 			// Get tgId for chat button
-			tgId := client["tgId"]
+			tgIdStr := ""
+			if tgIdVal, ok := client["tgId"]; ok && tgIdVal != "" {
+				tgIdStr = fmt.Sprintf("%v", tgIdVal)
+			}
 
 			// Second row: Chat and Delete buttons
 			var secondRow []telego.InlineKeyboardButton
 
 			// Add chat button if tgId exists
-			if tgId != "" && tgId != "0" {
-				tgIDInt, err := strconv.ParseInt(tgId, 10, 64)
+			if tgIdStr != "" && tgIdStr != "0" {
+				tgIDInt, err := strconv.ParseInt(tgIdStr, 10, 64)
 				if err == nil && tgIDInt > 0 {
 					chatButton := tu.InlineKeyboardButton("💬 Чат").
 						WithURL(fmt.Sprintf("tg://user?id=%d", tgIDInt))
 					secondRow = append(secondRow, chatButton)
+					log.Printf("[DEBUG] Added chat button for client %s with tgId %d", email, tgIDInt)
 				}
 			}
 
