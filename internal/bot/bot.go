@@ -383,6 +383,43 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 				if clientData, ok := b.clientCache.Load(cacheKey); ok {
 					client := clientData.(map[string]string)
 					email := client["email"]
+
+					// Show confirmation dialog
+					confirmMsg := fmt.Sprintf("❗ Вы уверены, что хотите удалить клиента?\n\n👤 Email: %s", email)
+					keyboard := tu.InlineKeyboard(
+						tu.InlineKeyboardRow(
+							tu.InlineKeyboardButton("✅ Да, удалить").WithCallbackData(fmt.Sprintf("confirm_delete_%d_%d", inboundID, clientIndex)),
+							tu.InlineKeyboardButton("❌ Отмена").WithCallbackData(fmt.Sprintf("cancel_delete_%d_%d", inboundID, clientIndex)),
+						),
+					)
+
+					b.bot.EditMessageText(context.Background(), &telego.EditMessageTextParams{
+						ChatID:      tu.ID(chatID),
+						MessageID:   messageID,
+						Text:        confirmMsg,
+						ReplyMarkup: keyboard,
+					})
+
+					b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+						CallbackQueryID: query.ID,
+					})
+					return nil
+				}
+			}
+		}
+	}
+
+	if strings.HasPrefix(data, "confirm_delete_") {
+		parts := strings.Split(data, "_")
+		if len(parts) == 4 {
+			inboundID, err1 := strconv.Atoi(parts[2])
+			clientIndex, err2 := strconv.Atoi(parts[3])
+
+			if err1 == nil && err2 == nil {
+				cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
+				if clientData, ok := b.clientCache.Load(cacheKey); ok {
+					client := clientData.(map[string]string)
+					email := client["email"]
 					clientID := client["id"] // UUID for VMESS/VLESS
 
 					// Delete the client using UUID
@@ -407,6 +444,16 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 				}
 			}
 		}
+	}
+
+	if strings.HasPrefix(data, "cancel_delete_") {
+		// Just go back to client list
+		b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "❌ Удаление отменено",
+		})
+		b.handleClients(chatID, true, messageID)
+		return nil
 	}
 
 	// Handle toggle_X_Y buttons
