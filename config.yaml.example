@@ -9,3 +9,13 @@ panel:
   url: "https://your-panel-url.com"
   username: "admin"
   password: "your_password"
+
+payment:
+  bank: "Сбербанк"  # Bank name
+  phone_number: "+79001234567"  # Phone number for payment
+  instructions_url: "https://disk.yandex.ru/d/your-instructions-link"  # Link to cloud storage with setup instructions
+  prices:
+    one_month: 300  # Price for 30 days in rubles
+    three_month: 800  # Price for 90 days in rubles
+    six_month: 1500  # Price for 180 days in rubles
+    one_year: 2800  # Price for 365 days in rubles

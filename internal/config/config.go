@@ -3,90 +3,80 @@ package config
 import (
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 
-	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v3"
 )
 
 // Config holds all application configuration
 type Config struct {
-	Panel    PanelConfig
-	Telegram TelegramConfig
-	Bot      BotConfig
+	Panel    PanelConfig    `yaml:"panel"`
+	Telegram TelegramConfig `yaml:"telegram"`
+	Payment  PaymentConfig  `yaml:"payment"`
 }
 
 // PanelConfig holds 3x-ui panel configuration
 type PanelConfig struct {
-	URL      string
-	Username string
-	Password string
+	URL      string `yaml:"url"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }
 
 // TelegramConfig holds Telegram bot configuration
 type TelegramConfig struct {
-	Token     string
-	AdminIDs  []int64
-	Proxy     string
-	APIServer string
+	Token     string  `yaml:"token"`
+	AdminIDs  []int64 `yaml:"admin_ids"`
+	Proxy     string  `yaml:"proxy"`
+	APIServer string  `yaml:"api_server"`
 }
 
-// BotConfig holds bot behavior configuration
-type BotConfig struct {
-	Language string
-	Timezone string
+// PaymentConfig holds payment information
+type PaymentConfig struct {
+	Bank            string       `yaml:"bank"`
+	PhoneNumber     string       `yaml:"phone_number"`
+	InstructionsURL string       `yaml:"instructions_url"`
+	Prices          PricesConfig `yaml:"prices"`
 }
 
-// Load reads configuration from environment variables
+// PricesConfig holds prices for different subscription periods
+type PricesConfig struct {
+	OneMonth   int `yaml:"one_month"`
+	ThreeMonth int `yaml:"three_month"`
+	SixMonth   int `yaml:"six_month"`
+	OneYear    int `yaml:"one_year"`
+}
+
+// Load reads configuration from config.yaml file
 func Load() (*Config, error) {
-	// Try to load .env file (ignore error if it doesn't exist)
-	_ = godotenv.Load()
-
-	cfg := &Config{
-		Panel: PanelConfig{
-			URL:      getEnv("PANEL_URL", "http://localhost:2053"),
-			Username: getEnv("PANEL_USERNAME", "admin"),
-			Password: getEnv("PANEL_PASSWORD", "admin"),
-		},
-		Telegram: TelegramConfig{
-			Token:     getEnv("TG_BOT_TOKEN", ""),
-			Proxy:     getEnv("TG_BOT_PROXY", ""),
-			APIServer: getEnv("TG_BOT_API_SERVER", ""),
-		},
-		Bot: BotConfig{
-			Language: getEnv("BOT_LANGUAGE", "en"),
-			Timezone: getEnv("BOT_TIMEZONE", "UTC"),
-		},
+	data, err := os.ReadFile("config.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config.yaml: %w", err)
 	}
 
-	// Parse admin IDs
-	adminIDsStr := getEnv("TG_BOT_ADMIN_IDS", "")
-	if adminIDsStr != "" {
-		for _, idStr := range strings.Split(adminIDsStr, ",") {
-			id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
-			if err != nil {
-				return nil, fmt.Errorf("invalid admin ID: %s", idStr)
-			}
-			cfg.Telegram.AdminIDs = append(cfg.Telegram.AdminIDs, id)
-		}
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config.yaml: %w", err)
 	}
 
 	// Validate required fields
 	if cfg.Telegram.Token == "" {
-		return nil, fmt.Errorf("TG_BOT_TOKEN is required")
+		return nil, fmt.Errorf("telegram.token is required")
 	}
 
 	if len(cfg.Telegram.AdminIDs) == 0 {
-		return nil, fmt.Errorf("TG_BOT_ADMIN_IDS is required")
+		return nil, fmt.Errorf("telegram.admin_ids is required")
 	}
 
-	return cfg, nil
-}
-
-// getEnv gets an environment variable with a default value
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+	if cfg.Panel.URL == "" {
+		return nil, fmt.Errorf("panel.url is required")
 	}
-	return defaultValue
+
+	if cfg.Panel.Username == "" {
+		return nil, fmt.Errorf("panel.username is required")
+	}
+
+	if cfg.Panel.Password == "" {
+		return nil, fmt.Errorf("panel.password is required")
+	}
+
+	return &cfg, nil
 }

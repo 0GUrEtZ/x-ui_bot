@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -39,7 +40,6 @@ func NewAPIClient(baseURL, username, password string) *APIClient {
 
 // Login authenticates with the 3x-ui panel
 func (c *APIClient) Login() error {
-	fmt.Printf("[DEBUG] Attempting login to: %s/login\n", c.baseURL)
 	loginData := map[string]string{
 		"username": c.username,
 		"password": c.password,
@@ -51,20 +51,15 @@ func (c *APIClient) Login() error {
 	}
 	defer resp.Body.Close()
 
-	fmt.Printf("[DEBUG] Login response status: %d\n", resp.StatusCode)
-
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("login failed with status: %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	// Extract session cookie
-	fmt.Printf("[DEBUG] Response cookies: %d\n", len(resp.Cookies()))
 	for _, cookie := range resp.Cookies() {
-		fmt.Printf("[DEBUG] Cookie: %s = %s\n", cookie.Name, cookie.Value)
 		if cookie.Name == "session" || cookie.Name == "3x-ui" {
 			c.sessionID = cookie.Value
-			fmt.Printf("[DEBUG] Session ID set: %s\n", c.sessionID)
 			return nil
 		}
 	}
@@ -126,8 +121,6 @@ func (c *APIClient) GetStatus() (map[string]interface{}, error) {
 
 // GetInbounds gets all inbounds
 func (c *APIClient) GetInbounds() ([]map[string]interface{}, error) {
-	fmt.Printf("[DEBUG] Requesting inbounds from: %s/panel/api/inbounds/list\n", c.baseURL)
-	fmt.Printf("[DEBUG] Session ID: %s\n", c.sessionID)
 
 	resp, err := c.doRequest("GET", "/panel/api/inbounds/list", nil, true)
 	if err != nil {
@@ -135,10 +128,7 @@ func (c *APIClient) GetInbounds() ([]map[string]interface{}, error) {
 	}
 	defer resp.Body.Close()
 
-	fmt.Printf("[DEBUG] GetInbounds response status: %d\n", resp.StatusCode)
-
 	if resp.StatusCode == http.StatusUnauthorized {
-		fmt.Printf("[DEBUG] Unauthorized, attempting re-login\n")
 		if err := c.Login(); err != nil {
 			return nil, fmt.Errorf("re-login failed: %w", err)
 		}
@@ -267,7 +257,6 @@ func (c *APIClient) GetClientTraffics(email string) (map[string]interface{}, err
 // GetClientTrafficsById gets all client traffic statistics for an inbound by ID
 func (c *APIClient) GetClientTrafficsById(inboundID int) ([]map[string]interface{}, error) {
 	path := fmt.Sprintf("/panel/api/inbounds/getClientTrafficsById/%d", inboundID)
-	fmt.Printf("[DEBUG] Requesting traffic from: %s\n", path)
 
 	resp, err := c.doRequest("GET", path, nil, true)
 	if err != nil {
@@ -287,7 +276,6 @@ func (c *APIClient) GetClientTrafficsById(inboundID int) ([]map[string]interface
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("[DEBUG] Traffic API response: %s\n", string(bodyBytes))
 
 	var result struct {
 		Success bool                     `json:"success"`
@@ -302,20 +290,20 @@ func (c *APIClient) GetClientTrafficsById(inboundID int) ([]map[string]interface
 		return nil, fmt.Errorf("API returned success=false")
 	}
 
-	fmt.Printf("[DEBUG] Parsed %d traffic records\n", len(result.Obj))
 	return result.Obj, nil
 }
 
 // UpdateClient updates an existing client in an inbound
 func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[string]interface{}) error {
-	fmt.Printf("[DEBUG] Updating client %s in inbound %d\n", clientID, inboundID)
-	fmt.Printf("[DEBUG] Client data: %+v\n", clientData)
+	log.Printf("[INFO] UpdateClient called for inbound=%d, client=%s", inboundID, clientID)
 
 	// Get current inbound data
 	inbounds, err := c.GetInbounds()
 	if err != nil {
+		log.Printf("[ERROR] Failed to get inbounds: %v", err)
 		return fmt.Errorf("failed to get inbounds: %w", err)
 	}
+	log.Printf("[INFO] Got %d inbounds", len(inbounds))
 
 	var targetInbound map[string]interface{}
 	for _, inbound := range inbounds {
@@ -347,6 +335,7 @@ func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[
 
 	// Find and update the target client
 	found := false
+	var clientUUID string
 	for i, cl := range clientsArray {
 		clientMap, ok := cl.(map[string]interface{})
 		if !ok {
@@ -354,13 +343,16 @@ func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[
 		}
 
 		if email, ok := clientMap["email"].(string); ok && email == clientID {
+			// Get UUID for API call
+			if id, ok := clientMap["id"].(string); ok {
+				clientUUID = id
+			}
 			// Merge new data with existing client data (preserve other fields)
 			for key, value := range clientData {
 				clientMap[key] = value
 			}
 			clientsArray[i] = clientMap
 			found = true
-			fmt.Printf("[DEBUG] Found and updated client at index %d\n", i)
 			break
 		}
 	}
@@ -369,33 +361,43 @@ func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[
 		return fmt.Errorf("client %s not found in inbound", clientID)
 	}
 
-	// Update settings with modified clients array
-	settings["clients"] = clientsArray
-
-	// Convert back to JSON string
-	settingsJSON, err := json.Marshal(settings)
-	if err != nil {
-		return fmt.Errorf("failed to marshal settings: %w", err)
+	if clientUUID == "" {
+		return fmt.Errorf("client UUID not found for %s", clientID)
 	}
 
-	// Prepare request data
+	// Get the updated client data
+	var updatedClient map[string]interface{}
+	for _, cl := range clientsArray {
+		if clientMap, ok := cl.(map[string]interface{}); ok {
+			if email, ok := clientMap["email"].(string); ok && email == clientID {
+				updatedClient = clientMap
+				break
+			}
+		}
+	}
+
+	// Convert client data to JSON (without array wrapper for single client update)
+	clientJSON, err := json.Marshal(updatedClient)
+	if err != nil {
+		return fmt.Errorf("failed to marshal client data: %w", err)
+	}
+
+	// Prepare request data - format like AddClient but for update
 	data := map[string]interface{}{
 		"id":       inboundID,
-		"settings": string(settingsJSON),
+		"settings": fmt.Sprintf(`{"clients":[%s]}`, string(clientJSON)),
 	}
 
-	fmt.Printf("[DEBUG] Sending POST to /panel/api/inbounds/updateClient/%s\n", clientID)
-	resp, err := c.doRequest("POST", fmt.Sprintf("/panel/api/inbounds/updateClient/%s", clientID), data, true)
+	log.Printf("[INFO] Sending updateClient request for %s (UUID: %s), inbound: %d", clientID, clientUUID, inboundID)
+	resp, err := c.doRequest("POST", fmt.Sprintf("/panel/api/inbounds/updateClient/%s", clientUUID), data, true)
 	if err != nil {
-		fmt.Printf("[ERROR] Request failed: %v\n", err)
+		log.Printf("[ERROR] doRequest failed: %v", err)
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
-
-	fmt.Printf("[DEBUG] Response status: %d\n", resp.StatusCode)
+	log.Printf("[INFO] Got response with status: %d", resp.StatusCode)
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		fmt.Printf("[DEBUG] Unauthorized, re-logging in\n")
 		if err := c.Login(); err != nil {
 			return fmt.Errorf("re-login failed: %w", err)
 		}
@@ -404,12 +406,12 @@ func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Printf("[ERROR] Failed to read response body: %v\n", err)
+		log.Printf("[ERROR] Failed to read response body: %v", err)
 		return fmt.Errorf("failed to read response: %w", err)
 	}
-	fmt.Printf("[DEBUG] Response body: %s\n", string(body))
 
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("[ERROR] API returned status %d: %s", resp.StatusCode, string(body))
 		return fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -419,33 +421,33 @@ func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
-		fmt.Printf("[ERROR] Failed to parse JSON response: %v\n", err)
+		log.Printf("[ERROR] Failed to parse JSON response: %v", err)
 		return fmt.Errorf("failed to parse JSON: %w", err)
 	}
 
 	if !result.Success {
-		fmt.Printf("[ERROR] API returned success=false: %s\n", result.Msg)
+		log.Printf("[ERROR] API returned success=false: %s", result.Msg)
 		return fmt.Errorf("API returned success=false: %s", result.Msg)
 	}
 
-	fmt.Printf("[DEBUG] Client updated successfully\n")
+	log.Printf("[INFO] UpdateClient successful for %s", clientID)
 	return nil
 }
 
 // DeleteClient deletes a client from an inbound
 func (c *APIClient) DeleteClient(inboundID int, clientID string) error {
-	fmt.Printf("[DEBUG] Deleting client %s from inbound %d\n", clientID, inboundID)
+	log.Printf("[INFO] DeleteClient called for inbound=%d, clientID=%s", inboundID, clientID)
 
-	data := map[string]interface{}{
-		"id":    inboundID,
-		"email": clientID,
-	}
-
-	resp, err := c.doRequest("POST", fmt.Sprintf("/panel/api/inbounds/%d/delClient/%s", inboundID, clientID), data, true)
+	// According to 3x-ui API, delClient endpoint expects clientId (UUID for VMESS/VLESS)
+	resp, err := c.doRequest("POST", fmt.Sprintf("/panel/api/inbounds/%d/delClient/%s", inboundID, clientID), map[string]interface{}{
+		"id": inboundID,
+	}, true)
 	if err != nil {
+		log.Printf("[ERROR] DeleteClient request failed: %v", err)
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	log.Printf("[INFO] DeleteClient got response with status: %d", resp.StatusCode)
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		if err := c.Login(); err != nil {
@@ -456,10 +458,14 @@ func (c *APIClient) DeleteClient(inboundID int, clientID string) error {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("[ERROR] DeleteClient failed to read response: %v", err)
 		return fmt.Errorf("failed to read response: %w", err)
 	}
 
+	log.Printf("[INFO] DeleteClient response body: %s", string(body))
+
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("[ERROR] DeleteClient API returned status %d: %s", resp.StatusCode, string(body))
 		return fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -469,20 +475,21 @@ func (c *APIClient) DeleteClient(inboundID int, clientID string) error {
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
+		log.Printf("[ERROR] DeleteClient failed to parse JSON: %v", err)
 		return fmt.Errorf("failed to parse JSON: %w", err)
 	}
 
 	if !result.Success {
+		log.Printf("[ERROR] DeleteClient API returned success=false: %s", result.Msg)
 		return fmt.Errorf("API returned success=false: %s", result.Msg)
 	}
 
-	fmt.Printf("[DEBUG] Client deleted successfully\n")
+	log.Printf("[INFO] DeleteClient successful for clientID=%s", clientID)
 	return nil
 }
 
 // AddClient adds a new client to an inbound
 func (c *APIClient) AddClient(inboundID int, clientData map[string]interface{}) error {
-	fmt.Printf("[DEBUG] Adding new client to inbound %d\n", inboundID)
 
 	clientJSON, _ := json.Marshal(clientData)
 	data := map[string]interface{}{
@@ -525,7 +532,6 @@ func (c *APIClient) AddClient(inboundID int, clientData map[string]interface{}) 
 		return fmt.Errorf("API returned success=false: %s", result.Msg)
 	}
 
-	fmt.Printf("[DEBUG] Client added successfully\n")
 	return nil
 }
 
@@ -616,30 +622,24 @@ func (c *APIClient) GetPanelSettings() (map[string]interface{}, error) {
 // GetClientLink returns the subscription link for a specific client email
 func (c *APIClient) GetClientLink(email string) (string, error) {
 	// Try to get the link directly from API
-	fmt.Printf("[DEBUG] Trying to get subscription link for email: %s\n", email)
 	resp, err := c.doRequest("GET", fmt.Sprintf("/panel/api/inbounds/getClientLink/%s", email), nil, true)
 	if err == nil {
 		defer resp.Body.Close()
 
-		fmt.Printf("[DEBUG] getClientLink API response status: %d\n", resp.StatusCode)
 		if resp.StatusCode == http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
-			fmt.Printf("[DEBUG] getClientLink API response body: %s\n", string(body))
 			var result struct {
 				Success bool   `json:"success"`
 				Obj     string `json:"obj"`
 			}
 			if json.Unmarshal(body, &result) == nil && result.Success && result.Obj != "" {
-				fmt.Printf("[DEBUG] Got subscription link from API: %s\n", result.Obj)
 				return result.Obj, nil
 			}
 		}
 	} else {
-		fmt.Printf("[DEBUG] Error calling getClientLink API: %v\n", err)
 	}
 
 	// Fallback: construct link manually using panel settings
-	fmt.Printf("[DEBUG] Constructing subscription link manually\n")
 
 	// Get panel settings to find subURI
 	panelSettings, err := c.GetPanelSettings()
@@ -682,7 +682,6 @@ func (c *APIClient) GetClientLink(email string) (string, error) {
 				// Found the client! Get their subId
 				if subId, ok := clientMap["subId"].(string); ok && subId != "" {
 					clientSubID = subId
-					fmt.Printf("[DEBUG] Found client subId: %s\n", clientSubID)
 					break
 				}
 			}
@@ -700,12 +699,10 @@ func (c *APIClient) GetClientLink(email string) (string, error) {
 	subURI := ""
 	if uri, ok := panelSettings["subURI"].(string); ok && uri != "" {
 		subURI = strings.TrimSuffix(uri, "/")
-		fmt.Printf("[DEBUG] Found subURI from panel settings: %s\n", subURI)
 
 		// If subURI is complete (includes path), just append clientSubID
 		// subURI format: https://subscribe.domain.com:port/path or https://subscribe.domain.com:port
 		subURL := fmt.Sprintf("%s/%s", subURI, clientSubID)
-		fmt.Printf("[DEBUG] Built subscription URL from subURI: %s\n", subURL)
 		return subURL, nil
 	}
 
@@ -761,13 +758,11 @@ func (c *APIClient) GetClientLink(email string) (string, error) {
 		}
 
 		subURL := fmt.Sprintf("%s%s%s", baseURL, subPath, clientSubID)
-		fmt.Printf("[DEBUG] Built subscription URL from domain/port/path: %s\n", subURL)
 		return subURL, nil
 	}
 
 	// Use baseURL as fallback
 	subURL := fmt.Sprintf("%s%s%s", c.baseURL, subPath, clientSubID)
-	fmt.Printf("[DEBUG] Built subscription URL (fallback): %s\n", subURL)
 	return subURL, nil
 }
 

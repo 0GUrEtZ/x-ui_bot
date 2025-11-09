@@ -1,22 +1,10 @@
-version: '3.8'
-
 services:
   x-ui-bot:
     build: .
     container_name: x-ui-bot
     restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      - PANEL_URL=${PANEL_URL}
-      - PANEL_USERNAME=${PANEL_USERNAME}
-      - PANEL_PASSWORD=${PANEL_PASSWORD}
-      - TG_BOT_TOKEN=${TG_BOT_TOKEN}
-      - TG_BOT_ADMIN_IDS=${TG_BOT_ADMIN_IDS}
-      - TG_BOT_PROXY=${TG_BOT_PROXY:-}
-      - TG_BOT_API_SERVER=${TG_BOT_API_SERVER:-}
-      - BOT_LANGUAGE=${BOT_LANGUAGE:-en}
-      - BOT_TIMEZONE=${BOT_TIMEZONE:-UTC}
+    volumes:
+      - ./config.yaml:/root/config.yaml:ro
     logging:
       driver: "json-file"
       options:
