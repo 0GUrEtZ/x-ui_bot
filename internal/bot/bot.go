@@ -556,7 +556,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 						})
 
 						// Ask admin to type message
-						msg := fmt.Sprintf("� Отправка сообщения клиенту %s\n\nВведите текст сообщения:", email)
+						msg := fmt.Sprintf("💬 Отправка сообщения клиенту %s\n\nВведите текст сообщения:", email)
 						b.sendMessage(chatID, msg)
 					} else {
 						b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
@@ -715,10 +715,10 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 					),
 					tu.KeyboardRow(
 						tu.KeyboardButton("📊 Статус подписки"),
-						tu.KeyboardButton("� Обновить username"),
+						tu.KeyboardButton("🔄 Обновить username"),
 					),
 					tu.KeyboardRow(
-						tu.KeyboardButton("�💬 Связь с админом"),
+						tu.KeyboardButton("💬 Связь с админом"),
 					),
 				).WithResizeKeyboard().WithIsPersistent()
 			} else {
@@ -1085,7 +1085,7 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 
 			// Add Message button if tgId exists
 			if tgIdStr != "" && tgIdStr != "0" {
-				messageButton := tu.InlineKeyboardButton("� Написать").
+				messageButton := tu.InlineKeyboardButton("💬 Написать").
 					WithCallbackData(fmt.Sprintf("msg_%d_%d", inboundID, i))
 				secondRow = append(secondRow, messageButton)
 			}
@@ -2198,9 +2198,9 @@ func (b *Bot) handleExtensionRequest(userID int64, chatID int64, messageID int, 
 	log.Printf("[INFO] Extension request sent for user %d, email: %s, duration: %d days", userID, email, duration)
 }
 
-// handleUpdateUsername initiates the email update process
+// handleUpdateUsername initiates the username update process
 func (b *Bot) handleUpdateUsername(chatID int64, userID int64) {
-	log.Printf("[INFO] User %d requested email update", userID)
+	log.Printf("[INFO] User %d requested username update", userID)
 
 	// Get client info to verify registration
 	clientInfo, err := b.apiClient.GetClientByTgID(userID)
@@ -2214,21 +2214,15 @@ func (b *Bot) handleUpdateUsername(chatID int64, userID int64) {
 		currentEmail = e
 	}
 
-	// Set state and ask for new email
+	// Set state and ask for new username
 	b.userStates[chatID] = "awaiting_new_email"
-	b.sendMessage(chatID, fmt.Sprintf("📧 Текущий email: %s\n\nВведите новый email:", currentEmail))
-	log.Printf("[INFO] User %d entering email update mode", userID)
+	b.sendMessage(chatID, fmt.Sprintf("👤 Текущий username: %s\n\nВведите новый username:", currentEmail))
+	log.Printf("[INFO] User %d entering username update mode", userID)
 }
 
-// handleNewEmailInput processes new email input and updates client
+// handleNewEmailInput processes new username input and updates client
 func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
-	log.Printf("[INFO] User %d updating email to: %s", userID, newEmail)
-
-	// Basic email validation
-	if !strings.Contains(newEmail, "@") || !strings.Contains(newEmail, ".") {
-		b.sendMessage(chatID, "❌ Неверный формат email. Пожалуйста, введите корректный email адрес.")
-		return
-	}
+	log.Printf("[INFO] User %d updating username to: %s", userID, newEmail)
 
 	// Get current client info
 	clientInfo, err := b.apiClient.GetClientByTgID(userID)
@@ -2262,13 +2256,13 @@ func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
 	err = b.apiClient.UpdateClient(inboundID, oldEmail, clientInfo)
 	if err != nil {
 		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка обновления: %v", err))
-		log.Printf("[ERROR] Failed to update email for user %d: %v", userID, err)
+		log.Printf("[ERROR] Failed to update username for user %d: %v", userID, err)
 		delete(b.userStates, chatID)
 		return
 	}
 
-	b.sendMessage(chatID, fmt.Sprintf("✅ Email успешно обновлен!\n\n📧 Старый: %s\n� Новый: %s", oldEmail, newEmail))
-	log.Printf("[INFO] Email updated for user %d from %s to %s", userID, oldEmail, newEmail)
+	b.sendMessage(chatID, fmt.Sprintf("✅ Username успешно обновлен!\n\n👤 Старый: %s\n👤 Новый: %s", oldEmail, newEmail))
+	log.Printf("[INFO] Username updated for user %d from %s to %s", userID, oldEmail, newEmail)
 
 	// Clear state
 	delete(b.userStates, chatID)
