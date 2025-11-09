@@ -43,6 +43,21 @@ type RegistrationRequest struct {
 	Timestamp  time.Time
 }
 
+// AdminMessageState represents state for admin sending message to client
+type AdminMessageState struct {
+	ClientEmail string
+	ClientTgID  string
+	InboundID   int
+	ClientIndex int
+}
+
+// UserMessageState represents state for user sending message to admin
+type UserMessageState struct {
+	UserID     int64
+	Username   string
+	TgUsername string
+}
+
 // Bot represents the Telegram bot
 type Bot struct {
 	config            *config.Config
@@ -56,6 +71,8 @@ type Bot struct {
 	clientCache       sync.Map // Cache for client data: "inboundID_index" -> client map
 	registrationReqs  map[int64]*RegistrationRequest
 	registrationMutex sync.Mutex
+	adminMessageState map[int64]*AdminMessageState // State for admin messaging clients
+	userMessageState  map[int64]*UserMessageState  // State for user messaging admins
 }
 
 // NewBot creates a new Bot instance
@@ -66,11 +83,12 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient) (*Bot, error) {
 	}
 
 	return &Bot{
-		config:           cfg,
-		apiClient:        apiClient,
-		bot:              bot,
-		userStates:       make(map[int64]string),
-		registrationReqs: make(map[int64]*RegistrationRequest),
+		config:            cfg,
+		apiClient:         apiClient,
+		bot:               bot,
+		userStates:        make(map[int64]string),
+		registrationReqs:  make(map[int64]*RegistrationRequest),
+		adminMessageState: make(map[int64]*AdminMessageState),
 	}, nil
 }
 
@@ -246,6 +264,12 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 		case "awaiting_email":
 			b.handleRegistrationEmail(chatID, userID, message.Text)
 			return nil
+		case "awaiting_admin_message":
+			b.handleAdminMessageSend(chatID, message.Text)
+			return nil
+		case "awaiting_user_message":
+			b.handleUserMessageSend(chatID, userID, message.Text, message.From)
+			return nil
 		}
 	}
 
@@ -279,6 +303,8 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 			b.handleSubscriptionStatus(chatID, userID)
 		} else if strings.Contains(message.Text, "Продлить подписку") {
 			b.handleExtendSubscription(chatID, userID)
+		} else if strings.Contains(message.Text, "Связь с админом") {
+			b.handleContactAdmin(chatID, userID)
 		}
 	}
 
@@ -456,11 +482,11 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		return nil
 	}
 
-	if strings.HasPrefix(data, "show_id_") {
+	if strings.HasPrefix(data, "msg_") {
 		parts := strings.Split(data, "_")
-		if len(parts) == 4 {
-			inboundID, err1 := strconv.Atoi(parts[2])
-			clientIndex, err2 := strconv.Atoi(parts[3])
+		if len(parts) == 3 {
+			inboundID, err1 := strconv.Atoi(parts[1])
+			clientIndex, err2 := strconv.Atoi(parts[2])
 
 			if err1 == nil && err2 == nil {
 				cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
@@ -470,11 +496,22 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 					tgId := client["tgId"]
 
 					if tgId != "" && tgId != "0" {
+						// Store admin chat ID and client info for message sending
+						b.adminMessageState[chatID] = &AdminMessageState{
+							ClientEmail: email,
+							ClientTgID:  tgId,
+							InboundID:   inboundID,
+							ClientIndex: clientIndex,
+						}
+						b.userStates[chatID] = "awaiting_admin_message"
+
 						b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 							CallbackQueryID: query.ID,
-							Text:            fmt.Sprintf("📋 Telegram ID клиента %s:\n%s\n\nМожете найти в Telegram через @username или ID", email, tgId),
-							ShowAlert:       true,
 						})
+
+						// Ask admin to type message
+						msg := fmt.Sprintf("� Отправка сообщения клиенту %s\n\nВведите текст сообщения:", email)
+						b.sendMessage(chatID, msg)
 					} else {
 						b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 							CallbackQueryID: query.ID,
@@ -485,6 +522,26 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 					return nil
 				}
 			}
+		}
+	}
+
+	// Handle reply_X button (admin replying to user message)
+	if strings.HasPrefix(data, "reply_") {
+		userIDStr := strings.TrimPrefix(data, "reply_")
+		replyToUserID, err := strconv.ParseInt(userIDStr, 10, 64)
+		if err == nil {
+			// Store state for admin reply
+			b.adminMessageState[chatID] = &AdminMessageState{
+				ClientTgID: userIDStr,
+			}
+			b.userStates[chatID] = "awaiting_admin_message"
+
+			b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+				CallbackQueryID: query.ID,
+			})
+
+			b.sendMessage(chatID, fmt.Sprintf("💬 Введите ответ пользователю (ID: %d):", replyToUserID))
+			return nil
 		}
 	}
 
@@ -612,6 +669,7 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 					),
 					tu.KeyboardRow(
 						tu.KeyboardButton("📊 Статус подписки"),
+						tu.KeyboardButton("💬 Связь с админом"),
 					),
 				).WithResizeKeyboard().WithIsPersistent()
 			} else {
@@ -623,6 +681,9 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 					tu.KeyboardRow(
 						tu.KeyboardButton("📊 Статус подписки"),
 						tu.KeyboardButton("🔄 Продлить подписку"),
+					),
+					tu.KeyboardRow(
+						tu.KeyboardButton("💬 Связь с админом"),
 					),
 				).WithResizeKeyboard().WithIsPersistent()
 			}
@@ -963,28 +1024,25 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 			toggleButton := tu.InlineKeyboardButton(buttonText).
 				WithCallbackData(fmt.Sprintf("toggle_%d_%d", inboundID, i))
 
-			// Delete button
-			deleteButton := tu.InlineKeyboardButton("�️ Удалить").
-				WithCallbackData(fmt.Sprintf("delete_%d_%d", inboundID, i))
-
-			// Get tgId for ID button
+			// Get tgId for message button
 			tgIdStr := ""
 			if tgIdVal, ok := client["tgId"]; ok && tgIdVal != "" {
 				tgIdStr = fmt.Sprintf("%v", tgIdVal)
 			}
 
-			// Second row: ID and Delete buttons
+			// Second row: Message and Delete buttons
 			var secondRow []telego.InlineKeyboardButton
 
-			// Add ID button if tgId exists
+			// Add Message button if tgId exists
 			if tgIdStr != "" && tgIdStr != "0" {
-				idButton := tu.InlineKeyboardButton("📋 ID").
-					WithCallbackData(fmt.Sprintf("show_id_%d_%d", inboundID, i))
-				secondRow = append(secondRow, idButton)
+				messageButton := tu.InlineKeyboardButton("� Написать").
+					WithCallbackData(fmt.Sprintf("msg_%d_%d", inboundID, i))
+				secondRow = append(secondRow, messageButton)
 			}
 
-			// Add delete button
-			secondRow = append(secondRow, deleteButton)
+			// Delete button
+			secondRow = append(secondRow, tu.InlineKeyboardButton("🗑️ Удалить").
+				WithCallbackData(fmt.Sprintf("delete_%d_%d", inboundID, i)))
 
 			// Add buttons in rows (vertical layout)
 			buttons = append(buttons, []telego.InlineKeyboardButton{toggleButton})
@@ -1004,6 +1062,119 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 	}
 
 	log.Printf("[INFO] Sent %d clients to user ID: %d", totalClients, chatID)
+}
+
+// handleAdminMessageSend handles sending message from admin to client
+func (b *Bot) handleAdminMessageSend(adminChatID int64, messageText string) {
+	state, exists := b.adminMessageState[adminChatID]
+	if !exists {
+		b.sendMessage(adminChatID, "❌ Ошибка: состояние не найдено")
+		delete(b.userStates, adminChatID)
+		return
+	}
+
+	// Parse client Telegram ID
+	clientTgID, err := strconv.ParseInt(state.ClientTgID, 10, 64)
+	if err != nil {
+		b.sendMessage(adminChatID, "❌ Ошибка: неверный Telegram ID клиента")
+		delete(b.userStates, adminChatID)
+		delete(b.adminMessageState, adminChatID)
+		return
+	}
+
+	// Send message to client
+	_, err = b.bot.SendMessage(context.Background(), &telego.SendMessageParams{
+		ChatID:    tu.ID(clientTgID),
+		Text:      fmt.Sprintf("📨 <b>Сообщение от администратора:</b>\n\n%s", messageText),
+		ParseMode: "HTML",
+	})
+
+	if err != nil {
+		b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить сообщение клиенту %s: %v", state.ClientEmail, err))
+	} else {
+		b.sendMessage(adminChatID, fmt.Sprintf("✅ Сообщение отправлено клиенту %s", state.ClientEmail))
+	}
+
+	// Clear state
+	delete(b.userStates, adminChatID)
+	delete(b.adminMessageState, adminChatID)
+}
+
+// handleContactAdmin initiates user messaging admin
+func (b *Bot) handleContactAdmin(chatID int64, userID int64) {
+	log.Printf("[INFO] User %d wants to contact admin", userID)
+
+	// Get user info from Telegram
+	tgUsername := ""
+	userName := ""
+
+	// Try to get from API (if registered)
+	clientInfo, err := b.apiClient.GetClientByTgID(userID)
+	if err == nil && clientInfo != nil {
+		if email, ok := clientInfo["email"].(string); ok {
+			userName = email
+		}
+	}
+
+	// Store state
+	b.userMessageState[chatID] = &UserMessageState{
+		UserID:     userID,
+		Username:   userName,
+		TgUsername: tgUsername,
+	}
+	b.userStates[chatID] = "awaiting_user_message"
+
+	b.sendMessage(chatID, "💬 Напишите ваше сообщение администратору:")
+}
+
+// handleUserMessageSend handles sending message from user to admins
+func (b *Bot) handleUserMessageSend(chatID int64, userID int64, messageText string, from *telego.User) {
+	state, exists := b.userMessageState[chatID]
+	if !exists {
+		b.sendMessage(chatID, "❌ Ошибка: состояние не найдено")
+		delete(b.userStates, chatID)
+		return
+	}
+
+	// Get username from message if not in state
+	tgUsername := ""
+	if from.Username != "" {
+		tgUsername = "@" + from.Username
+	}
+	userName := state.Username
+	if userName == "" {
+		userName = from.FirstName
+	}
+
+	// Send message to all admins with reply button
+	for _, adminID := range b.config.Telegram.AdminIDs {
+		msg := fmt.Sprintf(
+			"📨 <b>Сообщение от пользователя:</b>\n\n"+
+				"👤 %s %s\n"+
+				"🆔 ID: %d\n\n"+
+				"💬 <i>%s</i>",
+			userName,
+			tgUsername,
+			userID,
+			html.EscapeString(messageText),
+		)
+
+		keyboard := tu.InlineKeyboard(
+			tu.InlineKeyboardRow(
+				tu.InlineKeyboardButton("💬 Ответить").WithCallbackData(fmt.Sprintf("reply_%d", userID)),
+			),
+		)
+
+		b.bot.SendMessage(context.Background(), tu.Message(tu.ID(adminID), msg).
+			WithReplyMarkup(keyboard).
+			WithParseMode("HTML"))
+	}
+
+	b.sendMessage(chatID, "✅ Ваше сообщение отправлено администратору")
+
+	// Clear state
+	delete(b.userStates, chatID)
+	delete(b.userMessageState, chatID)
 }
 
 // handleUsage handles the /usage command
