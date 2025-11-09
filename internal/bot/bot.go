@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"x-ui-bot/internal/config"
 	"x-ui-bot/pkg/client"
@@ -2007,12 +2008,13 @@ func (b *Bot) handleRegistrationEmail(chatID int64, userID int64, email string) 
 		return
 	}
 
-	// Validate username length (3-32 characters)
-	if len(email) < 3 {
+	// Validate username length (3-32 characters, count actual characters not bytes)
+	usernameLength := utf8.RuneCountInString(email)
+	if usernameLength < 3 {
 		b.sendMessage(chatID, "❌ Username слишком короткий. Минимум 3 символа.\n\nВведите другой username:")
 		return
 	}
-	if len(email) > 32 {
+	if usernameLength > 32 {
 		b.sendMessage(chatID, "❌ Username слишком длинный. Максимум 32 символа.\n\nВведите другой username:")
 		return
 	}
@@ -2649,12 +2651,13 @@ func (b *Bot) handleUpdateUsername(chatID int64, userID int64) {
 func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
 	log.Printf("[INFO] User %d updating username to: %s", userID, newEmail)
 
-	// Validate username length (3-32 characters)
-	if len(newEmail) < 3 {
+	// Validate username length (3-32 characters, count actual characters not bytes)
+	usernameLength := utf8.RuneCountInString(newEmail)
+	if usernameLength < 3 {
 		b.sendMessage(chatID, "❌ Username слишком короткий. Минимум 3 символа.\n\nВведите новый username:")
 		return
 	}
-	if len(newEmail) > 32 {
+	if usernameLength > 32 {
 		b.sendMessage(chatID, "❌ Username слишком длинный. Максимум 32 символа.\n\nВведите новый username:")
 		return
 	}
