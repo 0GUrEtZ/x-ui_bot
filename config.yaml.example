@@ -9,11 +9,14 @@ panel:
   url: "https://your-panel-url.com"
   username: "admin"
   password: "your_password"
+  limit_ip: 5  # Limit of simultaneous IP connections per user (0 = unlimited)
+  traffic_limit_gb: 100  # Traffic limit per user in GB (0 = unlimited)
 
 payment:
   bank: "Сбербанк"
   phone_number: "+79001234567"
   instructions_url: ""
+  trial_days: 3  # Number of days for trial subscription (0 = disabled)
   prices:
     one_month: 300
     three_month: 800

@@ -61,6 +61,12 @@ type UserMessageState struct {
 	Timestamp  time.Time
 }
 
+// BroadcastState represents state for admin creating broadcast
+type BroadcastState struct {
+	Message   string
+	Timestamp time.Time
+}
+
 // RateLimitEntry represents rate limit tracking for a user
 type RateLimitEntry struct {
 	count     int
@@ -82,6 +88,7 @@ type Bot struct {
 	registrationMutex sync.Mutex
 	adminMessageState map[int64]*AdminMessageState // State for admin messaging clients
 	userMessageState  map[int64]*UserMessageState  // State for user messaging admins
+	broadcastState    map[int64]*BroadcastState    // State for admin creating broadcast
 	rateLimits        map[int64]*RateLimitEntry    // Rate limiting per user
 	rateLimitMutex    sync.Mutex
 }
@@ -101,6 +108,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient) (*Bot, error) {
 		registrationReqs:  make(map[int64]*RegistrationRequest),
 		adminMessageState: make(map[int64]*AdminMessageState),
 		userMessageState:  make(map[int64]*UserMessageState),
+		broadcastState:    make(map[int64]*BroadcastState),
 		rateLimits:        make(map[int64]*RateLimitEntry),
 	}, nil
 }
@@ -228,7 +236,7 @@ func (b *Bot) handleCommand(ctx *th.Context, message telego.Message) error {
 	case "usage":
 		if len(args) > 1 {
 			email := args[1]
-			b.handleUsage(chatID, email, isAdmin)
+			b.handleUsage(chatID, email)
 		} else {
 			b.sendMessage(chatID, "❌ Использование: /usage &lt;email&gt;")
 		}
@@ -328,6 +336,9 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 		case "awaiting_user_message":
 			b.handleUserMessageSend(chatID, userID, message.Text, message.From)
 			return nil
+		case "awaiting_broadcast_message":
+			b.handleBroadcastMessage(chatID, message.Text)
+			return nil
 		}
 	}
 
@@ -344,6 +355,12 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 			return nil
 		}
 		b.handleClients(chatID, isAdmin)
+	case "📢 Сделать объявление":
+		if !isAdmin {
+			b.sendMessage(chatID, "⛔ У вас нет прав")
+			return nil
+		}
+		b.handleBroadcastStart(chatID)
 	default:
 		// Handle buttons with emoji (encoding issues)
 		if strings.Contains(message.Text, "Зарегистрироваться") {
@@ -357,10 +374,8 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 			}
 			tgUsername := message.From.Username
 			b.handleRegistrationStart(chatID, userID, userName, tgUsername)
-		} else if strings.Contains(message.Text, "Получить VPN") {
-			b.handleGetSubscriptionLink(chatID, userID)
-		} else if strings.Contains(message.Text, "Статус подписки") {
-			b.handleSubscriptionStatus(chatID, userID)
+		} else if strings.Contains(message.Text, "Моя подписка") {
+			b.handleMySubscription(chatID, userID)
 		} else if strings.Contains(message.Text, "Продлить подписку") {
 			b.handleExtendSubscription(chatID, userID)
 		} else if strings.Contains(message.Text, "Настройки") {
@@ -720,6 +735,25 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		}
 	}
 
+	// Handle broadcast confirmation/cancellation
+	if data == "broadcast_confirm" {
+		b.handleBroadcastConfirm(chatID, messageID)
+		b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "📢 Отправка рассылки...",
+		})
+		return nil
+	}
+
+	if data == "broadcast_cancel" {
+		b.handleBroadcastCancel(chatID, messageID)
+		b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "❌ Отменено",
+		})
+		return nil
+	}
+
 	// Default callback response
 	b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 		CallbackQueryID: query.ID,
@@ -742,6 +776,9 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 			tu.KeyboardRow(
 				tu.KeyboardButton("📊 Статус сервера"),
 				tu.KeyboardButton("👥 Список клиентов"),
+			),
+			tu.KeyboardRow(
+				tu.KeyboardButton("📢 Сделать объявление"),
 			),
 		).WithResizeKeyboard().WithIsPersistent()
 
@@ -830,10 +867,7 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 				// Unlimited subscription - no extend button
 				keyboard = tu.Keyboard(
 					tu.KeyboardRow(
-						tu.KeyboardButton("📱 Получить VPN"),
-					),
-					tu.KeyboardRow(
-						tu.KeyboardButton("📊 Статус подписки"),
+						tu.KeyboardButton("📱 Моя подписка"),
 						tu.KeyboardButton("⚙️ Настройки"),
 					),
 					tu.KeyboardRow(
@@ -844,10 +878,7 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 				// Limited subscription - show extend button
 				keyboard = tu.Keyboard(
 					tu.KeyboardRow(
-						tu.KeyboardButton("📱 Получить VPN"),
-					),
-					tu.KeyboardRow(
-						tu.KeyboardButton("📊 Статус подписки"),
+						tu.KeyboardButton("📱 Моя подписка"),
 						tu.KeyboardButton("⏰ Продлить подписку"),
 					),
 					tu.KeyboardRow(
@@ -1416,7 +1447,7 @@ func (b *Bot) handleUserMessageSend(chatID int64, userID int64, messageText stri
 }
 
 // handleUsage handles the /usage command
-func (b *Bot) handleUsage(chatID int64, email string, isAdmin bool) {
+func (b *Bot) handleUsage(chatID int64, email string) {
 	traffic, err := b.apiClient.GetClientTraffics(email)
 	if err != nil {
 		b.sendMessage(chatID, fmt.Sprintf("❌ Failed to get client traffic: %v", err))
@@ -1657,8 +1688,19 @@ func (b *Bot) getInstructionsText() string {
 
 // createDurationKeyboard creates inline keyboard with duration options and prices
 // callbackPrefix should be "reg_duration" for registration or "extend_<userID>" for extension
-func (b *Bot) createDurationKeyboard(callbackPrefix string) *telego.InlineKeyboardMarkup {
-	return tu.InlineKeyboard(
+// isFirstPurchase indicates if trial option should be shown
+func (b *Bot) createDurationKeyboard(callbackPrefix string, isFirstPurchase bool) *telego.InlineKeyboardMarkup {
+	rows := [][]telego.InlineKeyboardButton{}
+
+	// Add trial option only for first purchase if enabled
+	if isFirstPurchase && b.config.Payment.TrialDays > 0 {
+		rows = append(rows, tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton(fmt.Sprintf("Пробный период %d дня - Бесплатно", b.config.Payment.TrialDays)).WithCallbackData(fmt.Sprintf("%s_%d", callbackPrefix, b.config.Payment.TrialDays)),
+		))
+	}
+
+	// Add regular plans
+	rows = append(rows,
 		tu.InlineKeyboardRow(
 			tu.InlineKeyboardButton(fmt.Sprintf("30 дней - %d₽", b.config.Payment.Prices.OneMonth)).WithCallbackData(fmt.Sprintf("%s_30", callbackPrefix)),
 		),
@@ -1672,6 +1714,8 @@ func (b *Bot) createDurationKeyboard(callbackPrefix string) *telego.InlineKeyboa
 			tu.InlineKeyboardButton(fmt.Sprintf("365 дней - %d₽", b.config.Payment.Prices.OneYear)).WithCallbackData(fmt.Sprintf("%s_365", callbackPrefix)),
 		),
 	)
+
+	return tu.InlineKeyboard(rows...)
 }
 
 // sendMessage sends a text message
@@ -1848,38 +1892,6 @@ func (b *Bot) formatBytes(value interface{}) string {
 	return fmt.Sprintf("%.2f %s", bytes/float64(div), units[exp])
 }
 
-// formatTimestamp formats Unix timestamp to readable date
-func (b *Bot) formatTimestamp(value interface{}) string {
-	var timestamp int64
-
-	switch v := value.(type) {
-	case string:
-		if v == "" || v == "0" {
-			return "∞"
-		}
-		parsed, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return "∞"
-		}
-		timestamp = parsed
-	case float64:
-		timestamp = int64(v)
-	case int64:
-		timestamp = v
-	case int:
-		timestamp = int64(v)
-	default:
-		return "∞"
-	}
-
-	if timestamp == 0 {
-		return "∞"
-	}
-
-	t := time.Unix(timestamp/1000, 0)
-	return t.Format("02.01.2006 15:04")
-}
-
 // handleEnableClient enables a client
 func (b *Bot) handleEnableClient(inboundID int, email string, client map[string]string) error {
 	log.Printf("[INFO] Enabling client: %s (inbound: %d)", email, inboundID)
@@ -1992,7 +2004,15 @@ func (b *Bot) handleRegistrationEmail(chatID int64, userID int64, email string) 
 	req.Status = "input_duration"
 	b.userStates[chatID] = "awaiting_duration"
 
-	keyboard := b.createDurationKeyboard("reg_duration")
+	// Check if user has had previous subscriptions - trial only for first purchase
+	isFirstPurchase := true
+	_, err := b.apiClient.GetClientByTgID(userID)
+	if err == nil {
+		// User already exists - not first purchase
+		isFirstPurchase = false
+	}
+
+	keyboard := b.createDurationKeyboard("reg_duration", isFirstPurchase)
 
 	msg := fmt.Sprintf("✅ Username: %s\n\n🔹 Шаг 2/2: Выберите срок действия:", email)
 	b.bot.SendMessage(context.Background(), tu.Message(tu.ID(chatID), msg).WithReplyMarkup(keyboard))
@@ -2020,30 +2040,48 @@ func (b *Bot) handleRegistrationDuration(userID int64, chatID int64, duration in
 
 	// Determine price based on duration
 	var price int
-	switch duration {
-	case 30:
-		price = b.config.Payment.Prices.OneMonth
-	case 90:
-		price = b.config.Payment.Prices.ThreeMonth
-	case 180:
-		price = b.config.Payment.Prices.SixMonth
-	case 365:
-		price = b.config.Payment.Prices.OneYear
+	isTrial := (duration == b.config.Payment.TrialDays && b.config.Payment.TrialDays > 0)
+
+	if isTrial {
+		price = 0
+	} else {
+		switch duration {
+		case 30:
+			price = b.config.Payment.Prices.OneMonth
+		case 90:
+			price = b.config.Payment.Prices.ThreeMonth
+		case 180:
+			price = b.config.Payment.Prices.SixMonth
+		case 365:
+			price = b.config.Payment.Prices.OneYear
+		}
 	}
 
-	paymentMsg := fmt.Sprintf(
-		"✅ Заявка отправлена!\n\n"+
-			"⏳ Ожидайте подтверждения от администратора.\n\n"+
-			"💳 <b>Реквизиты для оплаты:</b>\n"+
-			"🏦 Банк: %s\n"+
-			"📱 Номер: %s\n"+
-			"💰 Сумма: %d₽\n\n"+
-			"✍️ В комментарии укажите свой username.\n\n"+
-			"<i>После оплаты дождитесь подтверждения от администратора.</i>",
-		html.EscapeString(b.config.Payment.Bank),
-		b.config.Payment.PhoneNumber,
-		price,
-	)
+	var paymentMsg string
+	if isTrial {
+		paymentMsg = fmt.Sprintf(
+			"✅ Заявка на пробный период отправлена!\n\n"+
+				"🎁 <b>Пробный период: %d дня БЕСПЛАТНО</b>\n\n"+
+				"⏳ Ожидайте подтверждения от администратора.\n\n"+
+				"<i>Оплата не требуется. После активации вы получите доступ к VPN на %d дня.</i>",
+			duration,
+			duration,
+		)
+	} else {
+		paymentMsg = fmt.Sprintf(
+			"✅ Заявка отправлена!\n\n"+
+				"⏳ Ожидайте подтверждения от администратора.\n\n"+
+				"💳 <b>Реквизиты для оплаты:</b>\n"+
+				"🏦 Банк: %s\n"+
+				"📱 Номер: %s\n"+
+				"💰 Сумма: %d₽\n\n"+
+				"✍️ В комментарии укажите свой username.\n\n"+
+				"<i>После оплаты дождитесь подтверждения от администратора.</i>",
+			html.EscapeString(b.config.Payment.Bank),
+			b.config.Payment.PhoneNumber,
+			price,
+		)
+	}
 
 	b.sendMessage(chatID, paymentMsg)
 }
@@ -2058,17 +2096,31 @@ func (b *Bot) sendRegistrationRequestToAdmins(req *RegistrationRequest) {
 		tgUsernameStr = fmt.Sprintf("\n💬 Telegram: @%s", req.TgUsername)
 	}
 
+	// Check if this is a trial subscription
+	isTrial := (req.Duration == b.config.Payment.TrialDays && b.config.Payment.TrialDays > 0)
+	trialTag := ""
+	if isTrial {
+		trialTag = " 🎁 ПРОБНЫЙ ПЕРИОД"
+	}
+
+	// Determine correct plural form
+	durationText := fmt.Sprintf("%d дней", req.Duration)
+	if req.Duration <= 4 {
+		durationText = fmt.Sprintf("%d дня", req.Duration)
+	}
+
 	msg := fmt.Sprintf(
-		"📝 Новая заявка на регистрацию\n\n"+
+		"📝 Новая заявка на регистрацию%s\n\n"+
 			"👤 Пользователь: %s (ID: %d)%s\n"+
 			"👤 Username: %s\n"+
-			"📅 Срок: %d дней\n"+
+			"📅 Срок: %s\n"+
 			"🕐 Время: %s",
+		trialTag,
 		req.Username,
 		req.UserID,
 		tgUsernameStr,
 		req.Email,
-		req.Duration,
+		durationText,
 		req.Timestamp.Format("02.01.2006 15:04"),
 	)
 
@@ -2117,15 +2169,21 @@ func (b *Bot) handleRegistrationDecision(requestUserID int64, adminChatID int64,
 		// Notify user with subscription link
 		instructionsText := b.getInstructionsText()
 
+		limitDevicesText := ""
+		if b.config.Panel.LimitIP > 0 {
+			limitDevicesText = fmt.Sprintf("\n📱 Лимит устройств: %d", b.config.Panel.LimitIP)
+		}
+
 		userMsg := fmt.Sprintf(
 			"✅ <b>Ваша заявка одобрена!</b>\n\n"+
 				"👤 Аккаунт: %s\n"+
-				"📅 Срок: %d дней\n\n"+
+				"📅 Срок: %d дней%s\n\n"+
 				"🔗 <b>Ваша VPN конфигурация:</b>\n"+
 				"<blockquote expandable>%s</blockquote>\n\n"+
 				"Скопируйте эту ссылку и добавьте её в ваше VPN приложение.%s",
 			html.EscapeString(req.Email),
 			req.Duration,
+			limitDevicesText,
 			html.EscapeString(subLink),
 			instructionsText,
 		)
@@ -2220,12 +2278,18 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 	// Generate subscription ID (16 lowercase alphanumeric characters)
 	subID := generateRandomString(16)
 
+	// Calculate traffic limit in bytes
+	trafficLimitBytes := int64(0)
+	if b.config.Panel.TrafficLimitGB > 0 {
+		trafficLimitBytes = int64(b.config.Panel.TrafficLimitGB) * 1024 * 1024 * 1024
+	}
+
 	// Create client data based on protocol
 	clientData := map[string]interface{}{
 		"email":      req.Email,
 		"enable":     true,
 		"expiryTime": expiryTime,
-		"totalGB":    0, // Unlimited
+		"totalGB":    trafficLimitBytes,
 		"tgId":       req.UserID,
 		"subId":      subID,
 		"limitIp":    b.config.Panel.LimitIP,
@@ -2250,9 +2314,9 @@ func (b *Bot) editMessageText(chatID int64, messageID int, text string) {
 	})
 }
 
-// handleGetSubscriptionLink sends subscription link to user
-func (b *Bot) handleGetSubscriptionLink(chatID int64, userID int64) {
-	log.Printf("[INFO] User %d requested subscription link", userID)
+// handleMySubscription shows full subscription info with VPN link and instructions
+func (b *Bot) handleMySubscription(chatID int64, userID int64) {
+	log.Printf("[INFO] User %d requested subscription info", userID)
 
 	// Get client info
 	clientInfo, err := b.apiClient.GetClientByTgID(userID)
@@ -2286,75 +2350,7 @@ func (b *Bot) handleGetSubscriptionLink(chatID int64, userID int64) {
 		return
 	}
 
-	// Get traffic limit
-	totalGB := int64(0)
-	if tgb, ok := clientInfo["totalGB"].(float64); ok {
-		totalGB = int64(tgb)
-	}
-
-	// Get traffic stats
-	var up, down, total int64
-	traffic, err := b.apiClient.GetClientTraffics(email)
-	if err == nil && traffic != nil {
-		if u, ok := traffic["up"].(float64); ok {
-			up = int64(u)
-		}
-		if d, ok := traffic["down"].(float64); ok {
-			down = int64(d)
-		}
-		total = up + down
-	}
-
-	// Build traffic info
-	trafficText := fmt.Sprintf("\n\n📊 <b>Трафик:</b> %s", b.formatBytes(total))
-	if totalGB > 0 {
-		limitBytes := totalGB
-		percentage := float64(total) / float64(limitBytes) * 100
-		trafficEmoji := "🟢"
-		if percentage >= 90 {
-			trafficEmoji = "🔴"
-		} else if percentage >= 70 {
-			trafficEmoji = "🟡"
-		}
-		trafficText += fmt.Sprintf(" / %s %s (%.1f%%)",
-			b.formatBytes(limitBytes),
-			trafficEmoji,
-			percentage,
-		)
-	} else {
-		trafficText += " (безлимит)"
-	}
-
-	instructionsText := b.getInstructionsText()
-
-	msg := fmt.Sprintf(
-		"✅ <b>Ваша VPN конфигурация:</b>\n\n"+
-			"<blockquote expandable>%s</blockquote>%s%s",
-		html.EscapeString(subLink),
-		trafficText,
-		instructionsText,
-	)
-
-	b.sendMessage(chatID, msg)
-	log.Printf("[INFO] Sent VPN config to user %d", userID)
-}
-
-// handleSubscriptionStatus shows detailed subscription status to user
-func (b *Bot) handleSubscriptionStatus(chatID int64, userID int64) {
-	log.Printf("[INFO] User %d requested subscription status", userID)
-
-	// Get client info
-	clientInfo, err := b.apiClient.GetClientByTgID(userID)
-	if err != nil {
-		b.sendMessage(chatID, "❌ У вас нет активной подписки.\n\nДля получения VPN используйте кнопку '📱 Получить VPN'")
-		return
-	}
-
-	email := ""
-	if e, ok := clientInfo["email"].(string); ok {
-		email = e
-	}
-
+	// Get expiry time
 	expiryTime := int64(0)
 	if et, ok := clientInfo["expiryTime"].(float64); ok {
 		expiryTime = int64(et)
@@ -2365,9 +2361,6 @@ func (b *Bot) handleSubscriptionStatus(chatID int64, userID int64) {
 	if tgb, ok := clientInfo["totalGB"].(float64); ok {
 		totalGB = int64(tgb)
 	}
-
-	// Calculate days and hours remaining
-	daysRemaining, hoursRemaining := b.calculateTimeRemaining(expiryTime)
 
 	// Get traffic stats
 	var up, down, total int64
@@ -2385,55 +2378,17 @@ func (b *Bot) handleSubscriptionStatus(chatID int64, userID int64) {
 	// Status icon and text
 	statusIcon := "✅"
 	statusText := "Активна"
-	var msg string
-
-	// Build traffic info string with limit if applicable
-	trafficInfo := fmt.Sprintf(
-		"📈 <b>Трафик:</b>\n"+
-			"⬆️ Отправлено: %s\n"+
-			"⬇️ Получено: %s\n"+
-			"📊 Всего: %s",
-		b.formatBytes(up),
-		b.formatBytes(down),
-		b.formatBytes(total),
-	)
-
-	// Add traffic limit if set
-	if totalGB > 0 {
-		limitBytes := totalGB // totalGB is already in bytes
-		percentage := float64(total) / float64(limitBytes) * 100
-		trafficEmoji := "🟢"
-		if percentage >= 90 {
-			trafficEmoji = "🔴"
-		} else if percentage >= 70 {
-			trafficEmoji = "🟡"
-		}
-		trafficInfo += fmt.Sprintf("\n🎯 Лимит: %s %s (%.1f%%)",
-			b.formatBytes(limitBytes),
-			trafficEmoji,
-			percentage,
-		)
-	} else {
-		trafficInfo += "\n🎯 Лимит: ∞ (безлимит)"
-	}
+	expiryText := ""
 
 	if expiryTime == 0 {
 		// Unlimited subscription
 		statusIcon = "♾️"
 		statusText = "Безлимитная"
-		msg = fmt.Sprintf(
-			"📊 <b>Статус подписки</b>\n\n"+
-				"👤 Аккаунт: %s\n"+
-				"%s Статус: %s\n"+
-				"⏰ Истекает: ∞ (бессрочно)\n\n"+
-				"%s",
-			html.EscapeString(email),
-			statusIcon,
-			statusText,
-			trafficInfo,
-		)
+		expiryText = "⏰ Истекает: ∞ (бессрочно)"
 	} else {
-		// Limited subscription
+		// Calculate days remaining
+		daysRemaining, hoursRemaining := b.calculateTimeRemaining(expiryTime)
+
 		if daysRemaining <= 0 {
 			statusIcon = "⛔"
 			statusText = "Истекла"
@@ -2445,28 +2400,59 @@ func (b *Bot) handleSubscriptionStatus(chatID int64, userID int64) {
 			statusText = "Скоро истечёт"
 		}
 
-		// Format expiry date
 		expiryDate := time.UnixMilli(expiryTime).Format("02.01.2006 15:04")
-
-		msg = fmt.Sprintf(
-			"📊 <b>Статус подписки</b>\n\n"+
-				"👤 Аккаунт: %s\n"+
-				"%s Статус: %s\n"+
-				"⏰ Истекает: %s\n"+
-				"📅 Осталось: %d дней %d часов\n\n"+
-				"%s",
-			html.EscapeString(email),
-			statusIcon,
-			statusText,
-			expiryDate,
-			daysRemaining,
-			hoursRemaining,
-			trafficInfo,
-		)
+		expiryText = fmt.Sprintf("⏰ Истекает: %s\n📅 Осталось: %d дней %d часов", expiryDate, daysRemaining, hoursRemaining)
 	}
 
+	// Build traffic info
+	trafficInfo := fmt.Sprintf("📊 <b>Трафик:</b> %s", b.formatBytes(total))
+	if totalGB > 0 {
+		limitBytes := totalGB
+		percentage := float64(total) / float64(limitBytes) * 100
+		trafficEmoji := "🟢"
+		if percentage >= 90 {
+			trafficEmoji = "🔴"
+		} else if percentage >= 70 {
+			trafficEmoji = "🟡"
+		}
+		trafficInfo += fmt.Sprintf(" / %s %s (%.1f%%)",
+			b.formatBytes(limitBytes),
+			trafficEmoji,
+			percentage,
+		)
+	} else {
+		trafficInfo += " (безлимит)"
+	}
+
+	// Get device limit
+	limitDevicesText := ""
+	if limitIP, ok := clientInfo["limitIp"].(float64); ok && int(limitIP) > 0 {
+		limitDevicesText = fmt.Sprintf("\n📱 Лимит устройств: %d", int(limitIP))
+	}
+
+	// Get instructions
+	instructionsText := b.getInstructionsText()
+
+	msg := fmt.Sprintf(
+		"📱 <b>Моя подписка</b>\n\n"+
+			"👤 Аккаунт: %s\n"+
+			"%s Статус: %s\n"+
+			"%s%s\n\n"+
+			"%s\n\n"+
+			"🔗 <b>Ваша VPN конфигурация:</b>\n"+
+			"<blockquote expandable>%s</blockquote>%s",
+		html.EscapeString(email),
+		statusIcon,
+		statusText,
+		expiryText,
+		limitDevicesText,
+		trafficInfo,
+		html.EscapeString(subLink),
+		instructionsText,
+	)
+
 	b.sendMessage(chatID, msg)
-	log.Printf("[INFO] Sent subscription status to user %d", userID)
+	log.Printf("[INFO] Sent subscription info to user %d", userID)
 }
 
 // handleExtendSubscription handles subscription extension request
@@ -2497,8 +2483,8 @@ func (b *Bot) handleExtendSubscription(chatID int64, userID int64) {
 		return
 	}
 
-	// Show duration selection keyboard with prices
-	keyboard := b.createDurationKeyboard(fmt.Sprintf("extend_%d", userID))
+	// Show duration selection keyboard with prices (no trial for renewals)
+	keyboard := b.createDurationKeyboard(fmt.Sprintf("extend_%d", userID), false)
 
 	msg := fmt.Sprintf(
 		"🔄 <b>Продление подписки</b>\n\n"+
@@ -2759,12 +2745,21 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 	// Notify user
 	instructionsText := b.getInstructionsText()
 
+	// Get client info for device limit
+	clientInfo, err := b.apiClient.GetClientByTgID(userID)
+	limitDevicesText := ""
+	if err == nil {
+		if limitIP, ok := clientInfo["limitIp"].(float64); ok && int(limitIP) > 0 {
+			limitDevicesText = fmt.Sprintf("\n📱 Лимит устройств: %d", int(limitIP))
+		}
+	}
+
 	userMsg := fmt.Sprintf(
 		"✅ <b>Ваша подписка продлена!</b>\n\n"+
 			"👤 Аккаунт: %s\n"+
 			"📅 Продлено на: %d дней\n"+
 			"⏰ Истекает: %s\n"+
-			"📅 Осталось: %d дней %d часов\n\n"+
+			"📅 Осталось: %d дней %d часов%s\n\n"+
 			"🔗 <b>Ваша VPN конфигурация:</b>\n"+
 			"<blockquote expandable>%s</blockquote>%s",
 		html.EscapeString(email),
@@ -2772,6 +2767,7 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 		newExpiryFormatted,
 		daysUntilExpiry,
 		hoursUntilExpiry,
+		limitDevicesText,
 		html.EscapeString(subLink),
 		instructionsText,
 	)
@@ -2839,4 +2835,155 @@ func (b *Bot) handleExtensionRejection(userID int64, adminChatID int64, messageI
 	b.editMessageText(adminChatID, messageID, adminMsg)
 
 	log.Printf("[INFO] Extension rejected for user %d, email: %s", userID, email)
+}
+
+// handleBroadcastStart initiates broadcast message creation
+func (b *Bot) handleBroadcastStart(chatID int64) {
+	log.Printf("[INFO] Admin %d started broadcast creation", chatID)
+
+	b.userStates[chatID] = "awaiting_broadcast_message"
+	b.broadcastState[chatID] = &BroadcastState{
+		Timestamp: time.Now(),
+	}
+
+	msg := "📢 <b>Создание объявления</b>\n\n" +
+		"Отправьте текст объявления, которое будет разослано всем зарегистрированным пользователям.\n\n" +
+		"<i>Можно использовать HTML форматирование: &lt;b&gt;жирный&lt;/b&gt;, &lt;i&gt;курсив&lt;/i&gt;</i>"
+
+	b.sendMessage(chatID, msg)
+}
+
+// handleBroadcastMessage handles broadcast message text input
+func (b *Bot) handleBroadcastMessage(chatID int64, message string) {
+	state, exists := b.broadcastState[chatID]
+	if !exists {
+		return
+	}
+
+	state.Message = message
+
+	// Show confirmation with preview
+	msg := fmt.Sprintf(
+		"📢 <b>Подтверждение рассылки</b>\n\n"+
+			"<b>Предпросмотр:</b>\n"+
+			"──────────────\n"+
+			"%s\n"+
+			"──────────────\n\n"+
+			"Разослать это объявление всем пользователям?",
+		message,
+	)
+
+	keyboard := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("✅ Отправить").WithCallbackData("broadcast_confirm"),
+			tu.InlineKeyboardButton("❌ Отменить").WithCallbackData("broadcast_cancel"),
+		),
+	)
+
+	b.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
+}
+
+// handleBroadcastConfirm sends broadcast to all users
+func (b *Bot) handleBroadcastConfirm(chatID int64, messageID int) {
+	state, exists := b.broadcastState[chatID]
+	if !exists {
+		b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: fmt.Sprintf("%d", messageID),
+			Text:            "Ошибка: состояние рассылки не найдено",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	// Update message to show it's processing
+	b.editMessageText(chatID, messageID, "⏳ Отправка объявления...")
+
+	// Get all registered users
+	inbounds, err := b.apiClient.GetInbounds()
+	if err != nil {
+		log.Printf("[ERROR] Failed to get inbounds for broadcast: %v", err)
+		b.editMessageText(chatID, messageID, "❌ Ошибка при получении списка пользователей")
+		delete(b.broadcastState, chatID)
+		delete(b.userStates, chatID)
+		return
+	}
+
+	// Collect unique Telegram IDs
+	userIDs := make(map[int64]bool)
+	for _, inbound := range inbounds {
+		settings, ok := inbound["settings"].(string)
+		if !ok {
+			continue
+		}
+
+		var settingsData map[string]interface{}
+		if err := json.Unmarshal([]byte(settings), &settingsData); err != nil {
+			continue
+		}
+
+		clients, ok := settingsData["clients"].([]interface{})
+		if !ok {
+			continue
+		}
+
+		for _, clientInterface := range clients {
+			client, ok := clientInterface.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			if tgID, ok := client["tgId"].(float64); ok && tgID > 0 {
+				userIDs[int64(tgID)] = true
+			}
+		}
+	}
+
+	// Send broadcast to all users
+	successCount := 0
+	failCount := 0
+
+	broadcastMsg := fmt.Sprintf("📢 <b>Объявление</b>\n\n%s", state.Message)
+
+	for userID := range userIDs {
+		// Try to send message
+		_, err := b.bot.SendMessage(context.Background(), &telego.SendMessageParams{
+			ChatID:    tu.ID(userID),
+			Text:      broadcastMsg,
+			ParseMode: telego.ModeHTML,
+		})
+		if err != nil {
+			log.Printf("[WARNING] Failed to send broadcast to user %d: %v", userID, err)
+			failCount++
+		} else {
+			successCount++
+		}
+		time.Sleep(50 * time.Millisecond) // Rate limiting
+	}
+
+	// Update admin with results
+	resultMsg := fmt.Sprintf(
+		"✅ <b>Рассылка завершена</b>\n\n"+
+			"📊 Отправлено: %d\n"+
+			"❌ Ошибок: %d\n"+
+			"👥 Всего пользователей: %d",
+		successCount,
+		failCount,
+		len(userIDs),
+	)
+	b.editMessageText(chatID, messageID, resultMsg)
+
+	// Clean up state
+	delete(b.broadcastState, chatID)
+	delete(b.userStates, chatID)
+
+	log.Printf("[INFO] Broadcast completed by admin %d: %d sent, %d failed", chatID, successCount, failCount)
+}
+
+// handleBroadcastCancel cancels broadcast creation
+func (b *Bot) handleBroadcastCancel(chatID int64, messageID int) {
+	delete(b.broadcastState, chatID)
+	delete(b.userStates, chatID)
+
+	b.editMessageText(chatID, messageID, "❌ Рассылка отменена")
+	log.Printf("[INFO] Broadcast cancelled by admin %d", chatID)
 }

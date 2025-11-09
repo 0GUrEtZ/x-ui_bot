@@ -16,10 +16,11 @@ type Config struct {
 
 // PanelConfig holds 3x-ui panel configuration
 type PanelConfig struct {
-	URL      string `yaml:"url"`
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
-	LimitIP  int    `yaml:"limit_ip"`
+	URL            string `yaml:"url"`
+	Username       string `yaml:"username"`
+	Password       string `yaml:"password"`
+	LimitIP        int    `yaml:"limit_ip"`
+	TrafficLimitGB int    `yaml:"traffic_limit_gb"`
 }
 
 // TelegramConfig holds Telegram bot configuration
@@ -35,6 +36,7 @@ type PaymentConfig struct {
 	Bank            string       `yaml:"bank"`
 	PhoneNumber     string       `yaml:"phone_number"`
 	InstructionsURL string       `yaml:"instructions_url"`
+	TrialDays       int          `yaml:"trial_days"`
 	Prices          PricesConfig `yaml:"prices"`
 }
 

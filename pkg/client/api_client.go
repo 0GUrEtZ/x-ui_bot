@@ -756,9 +756,3 @@ func (c *APIClient) GetClientLink(email string) (string, error) {
 	subURL := fmt.Sprintf("%s%s%s", c.baseURL, subPath, clientSubID)
 	return subURL, nil
 }
-
-// toJSON converts a map to JSON string
-func toJSON(data interface{}) string {
-	b, _ := json.Marshal(data)
-	return string(b)
-}
