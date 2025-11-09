@@ -2036,11 +2036,12 @@ func (b *Bot) handleRegistrationDuration(userID int64, chatID int64, duration in
 			"⏳ Ожидайте подтверждения от администратора.\n\n"+
 			"💳 <b>Реквизиты для оплаты:</b>\n"+
 			"🏦 Банк: %s\n"+
-			"📱 Номер: <code>%s</code>\n"+
+			"📱 Номер: %s\n"+
 			"💰 Сумма: %d₽\n\n"+
+			"✍️ В комментарии укажите свой username.\n\n"+
 			"<i>После оплаты дождитесь подтверждения от администратора.</i>",
 		html.EscapeString(b.config.Payment.Bank),
-		html.EscapeString(b.config.Payment.PhoneNumber),
+		b.config.Payment.PhoneNumber,
 		price,
 	)
 
@@ -2587,13 +2588,14 @@ func (b *Bot) handleExtensionRequest(userID int64, chatID int64, messageID int, 
 			"📅 Срок: %d дней\n\n"+
 			"💳 <b>Реквизиты для оплаты:</b>\n"+
 			"🏦 Банк: %s\n"+
-			"📱 Номер: <code>%s</code>\n"+
+			"📱 Номер: %s\n"+
 			"💰 Сумма: %d₽\n\n"+
+			"✍️ В комментарии укажите свой username.\n\n"+
 			"⏳ После оплаты дождитесь одобрения администратора...",
 		html.EscapeString(email),
 		duration,
 		html.EscapeString(b.config.Payment.Bank),
-		html.EscapeString(b.config.Payment.PhoneNumber),
+		b.config.Payment.PhoneNumber,
 		price,
 	))
 
