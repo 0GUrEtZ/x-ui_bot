@@ -356,6 +356,16 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		}
 	}
 
+	// Handle contact admin (non-admin can use)
+	if data == "contact_admin" {
+		b.handleContactAdmin(chatID, userID)
+		b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "✅ Введите ваше сообщение",
+		})
+		return nil
+	}
+
 	// Check if user is admin for other callbacks
 	if !b.isAdmin(userID) {
 		b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
