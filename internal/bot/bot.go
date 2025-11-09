@@ -2000,7 +2000,7 @@ func (b *Bot) handleRegistrationEmail(chatID int64, userID int64, email string) 
 		return
 	}
 
-	// Validate email - check if not empty and doesn't contain button text
+	// Validate username - check if not empty and length
 	email = strings.TrimSpace(email)
 	if email == "" || strings.Contains(strings.ToLower(email), "зарегистрироваться") {
 		b.sendMessage(chatID, "❌ Username не может быть пустым.\n\nВведите корректный username:")
@@ -2648,6 +2648,16 @@ func (b *Bot) handleUpdateUsername(chatID int64, userID int64) {
 // handleNewEmailInput processes new username input and updates client
 func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
 	log.Printf("[INFO] User %d updating username to: %s", userID, newEmail)
+
+	// Validate username length (3-32 characters)
+	if len(newEmail) < 3 {
+		b.sendMessage(chatID, "❌ Username слишком короткий. Минимум 3 символа.\n\nВведите новый username:")
+		return
+	}
+	if len(newEmail) > 32 {
+		b.sendMessage(chatID, "❌ Username слишком длинный. Максимум 32 символа.\n\nВведите новый username:")
+		return
+	}
 
 	// Find client by tgId
 	foundClient, inboundID, oldEmail, err := b.findClientByTgID(userID)
