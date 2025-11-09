@@ -2249,11 +2249,20 @@ func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
 		return
 	}
 
-	// Update email field
-	clientInfo["email"] = newEmail
+	// Create clean client data without service fields
+	cleanClientData := make(map[string]interface{})
+	for key, value := range clientInfo {
+		// Skip service fields that start with _
+		if !strings.HasPrefix(key, "_") {
+			cleanClientData[key] = value
+		}
+	}
+
+	// Update email field in clean data
+	cleanClientData["email"] = newEmail
 
 	// Call UpdateClient with old email as identifier
-	err = b.apiClient.UpdateClient(inboundID, oldEmail, clientInfo)
+	err = b.apiClient.UpdateClient(inboundID, oldEmail, cleanClientData)
 	if err != nil {
 		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка обновления: %v", err))
 		log.Printf("[ERROR] Failed to update username for user %d: %v", userID, err)
