@@ -1125,6 +1125,15 @@ func (b *Bot) parseClients(settingsStr string) []map[string]string {
 			client["enable"] = "true"
 		}
 
+		// Telegram ID
+		if tgId, ok := clientMap["tgId"].(string); ok {
+			client["tgId"] = tgId
+		} else if tgId, ok := clientMap["tgId"].(float64); ok {
+			client["tgId"] = fmt.Sprintf("%.0f", tgId)
+		} else {
+			client["tgId"] = ""
+		}
+
 		// Traffic stats - default to 0
 		client["up"] = "0"
 		client["down"] = "0"
