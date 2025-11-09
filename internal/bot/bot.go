@@ -282,6 +282,9 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 		case "awaiting_email":
 			b.handleRegistrationEmail(chatID, userID, message.Text)
 			return nil
+		case "awaiting_new_email":
+			b.handleNewEmailInput(chatID, userID, message.Text)
+			return nil
 		case "awaiting_admin_message":
 			b.handleAdminMessageSend(chatID, message.Text)
 			return nil
@@ -322,9 +325,7 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 		} else if strings.Contains(message.Text, "Продлить подписку") {
 			b.handleExtendSubscription(chatID, userID)
 		} else if strings.Contains(message.Text, "Обновить username") {
-			// Get current Telegram username
-			currentUsername := message.From.Username
-			b.handleUpdateUsername(chatID, userID, currentUsername)
+			b.handleUpdateUsername(chatID, userID)
 		} else if strings.Contains(message.Text, "Связь с админом") {
 			b.handleContactAdmin(chatID, userID)
 		}
@@ -2197,20 +2198,49 @@ func (b *Bot) handleExtensionRequest(userID int64, chatID int64, messageID int, 
 	log.Printf("[INFO] Extension request sent for user %d, email: %s, duration: %d days", userID, email, duration)
 }
 
-// handleUpdateUsername updates user's username (subId) in the panel
-func (b *Bot) handleUpdateUsername(chatID int64, userID int64, currentUsername string) {
-	log.Printf("[INFO] User %d requested username update to: %s", userID, currentUsername)
+// handleUpdateUsername initiates the email update process
+func (b *Bot) handleUpdateUsername(chatID int64, userID int64) {
+	log.Printf("[INFO] User %d requested email update", userID)
 
-	// Get client info
+	// Get client info to verify registration
 	clientInfo, err := b.apiClient.GetClientByTgID(userID)
 	if err != nil {
 		b.sendMessage(chatID, "❌ Вы не зарегистрированы в системе")
 		return
 	}
 
-	email := ""
+	currentEmail := ""
 	if e, ok := clientInfo["email"].(string); ok {
-		email = e
+		currentEmail = e
+	}
+
+	// Set state and ask for new email
+	b.userStates[chatID] = "awaiting_new_email"
+	b.sendMessage(chatID, fmt.Sprintf("📧 Текущий email: %s\n\nВведите новый email:", currentEmail))
+	log.Printf("[INFO] User %d entering email update mode", userID)
+}
+
+// handleNewEmailInput processes new email input and updates client
+func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
+	log.Printf("[INFO] User %d updating email to: %s", userID, newEmail)
+
+	// Basic email validation
+	if !strings.Contains(newEmail, "@") || !strings.Contains(newEmail, ".") {
+		b.sendMessage(chatID, "❌ Неверный формат email. Пожалуйста, введите корректный email адрес.")
+		return
+	}
+
+	// Get current client info
+	clientInfo, err := b.apiClient.GetClientByTgID(userID)
+	if err != nil {
+		b.sendMessage(chatID, "❌ Ошибка: не удалось получить данные клиента")
+		delete(b.userStates, chatID)
+		return
+	}
+
+	oldEmail := ""
+	if e, ok := clientInfo["email"].(string); ok {
+		oldEmail = e
 	}
 
 	// Get inbound ID
@@ -2221,28 +2251,27 @@ func (b *Bot) handleUpdateUsername(chatID int64, userID int64, currentUsername s
 
 	if inboundID == 0 {
 		b.sendMessage(chatID, "❌ Ошибка: не удалось определить inbound ID")
+		delete(b.userStates, chatID)
 		return
 	}
 
-	// Update subId with current Telegram username
-	newSubId := currentUsername
-	if newSubId == "" {
-		newSubId = fmt.Sprintf("user_%d", userID)
-	}
+	// Update email field
+	clientInfo["email"] = newEmail
 
-	// Preserve all other fields, only update subId
-	clientInfo["subId"] = newSubId
-
-	// Call UpdateClient
-	err = b.apiClient.UpdateClient(inboundID, email, clientInfo)
+	// Call UpdateClient with old email as identifier
+	err = b.apiClient.UpdateClient(inboundID, oldEmail, clientInfo)
 	if err != nil {
 		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка обновления: %v", err))
-		log.Printf("[ERROR] Failed to update username for user %d: %v", userID, err)
+		log.Printf("[ERROR] Failed to update email for user %d: %v", userID, err)
+		delete(b.userStates, chatID)
 		return
 	}
 
-	b.sendMessage(chatID, fmt.Sprintf("✅ Username успешно обновлен!\n\n📝 Новый username: @%s", newSubId))
-	log.Printf("[INFO] Username updated for user %d (email: %s) to: %s", userID, email, newSubId)
+	b.sendMessage(chatID, fmt.Sprintf("✅ Email успешно обновлен!\n\n📧 Старый: %s\n� Новый: %s", oldEmail, newEmail))
+	log.Printf("[INFO] Email updated for user %d from %s to %s", userID, oldEmail, newEmail)
+
+	// Clear state
+	delete(b.userStates, chatID)
 }
 
 // handleExtensionApproval processes admin approval for subscription extension
