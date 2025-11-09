@@ -2224,45 +2224,64 @@ func (b *Bot) handleUpdateUsername(chatID int64, userID int64) {
 func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
 	log.Printf("[INFO] User %d updating username to: %s", userID, newEmail)
 
-	// Get current client info
-	clientInfo, err := b.apiClient.GetClientByTgID(userID)
+	// Get all inbounds to find the client
+	inbounds, err := b.apiClient.GetInbounds()
 	if err != nil {
-		b.sendMessage(chatID, "❌ Ошибка: не удалось получить данные клиента")
+		b.sendMessage(chatID, "❌ Ошибка: не удалось получить данные")
 		delete(b.userStates, chatID)
 		return
 	}
 
-	oldEmail := ""
-	if e, ok := clientInfo["email"].(string); ok {
-		oldEmail = e
-	}
+	// Find client by tgId
+	var foundClient map[string]string
+	var inboundID int
+	var oldEmail string
 
-	// Get inbound ID
-	inboundID := 0
-	if id, ok := clientInfo["_inboundID"].(float64); ok {
-		inboundID = int(id)
-	}
+	for _, inbound := range inbounds {
+		id := int(inbound["id"].(float64))
+		settingsStr, ok := inbound["settings"].(string)
+		if !ok {
+			continue
+		}
 
-	if inboundID == 0 {
-		b.sendMessage(chatID, "❌ Ошибка: не удалось определить inbound ID")
-		delete(b.userStates, chatID)
-		return
-	}
-
-	// Create clean client data without service fields
-	cleanClientData := make(map[string]interface{})
-	for key, value := range clientInfo {
-		// Skip service fields that start with _
-		if !strings.HasPrefix(key, "_") {
-			cleanClientData[key] = value
+		clients := b.parseClients(settingsStr)
+		for _, client := range clients {
+			if client["tgId"] == fmt.Sprintf("%d", userID) {
+				foundClient = client
+				inboundID = id
+				oldEmail = client["email"]
+				break
+			}
+		}
+		if foundClient != nil {
+			break
 		}
 	}
 
-	// Update email field in clean data
-	cleanClientData["email"] = newEmail
+	if foundClient == nil {
+		b.sendMessage(chatID, "❌ Ошибка: клиент не найден")
+		delete(b.userStates, chatID)
+		return
+	}
+
+	// Parse raw JSON and update email field
+	rawJSON := foundClient["_raw_json"]
+	var clientData map[string]interface{}
+	if err := json.Unmarshal([]byte(rawJSON), &clientData); err != nil {
+		b.sendMessage(chatID, "❌ Ошибка при обработке данных клиента")
+		log.Printf("[ERROR] Failed to parse client JSON: %v", err)
+		delete(b.userStates, chatID)
+		return
+	}
+
+	// Update email field
+	clientData["email"] = newEmail
+
+	// Fix numeric fields
+	b.fixNumericFields(clientData)
 
 	// Call UpdateClient with old email as identifier
-	err = b.apiClient.UpdateClient(inboundID, oldEmail, cleanClientData)
+	err = b.apiClient.UpdateClient(inboundID, oldEmail, clientData)
 	if err != nil {
 		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка обновления: %v", err))
 		log.Printf("[ERROR] Failed to update username for user %d: %v", userID, err)
