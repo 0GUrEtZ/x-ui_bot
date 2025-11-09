@@ -268,22 +268,11 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 
 	log.Printf("[INFO] Text message: '%s' by user ID: %d", message.Text, userID)
 
-	// Check if client is blocked (except for specific allowed actions and admins)
+	// Check if client is blocked — block all non-admin actions (including chat)
 	if !isAdmin {
-		state, exists := b.userStates[chatID]
-		// Allow message sending to admin and email input during registration
-		if exists && state != "awaiting_user_message" && state != "awaiting_email" {
-			if b.isClientBlocked(userID) {
-				b.sendMessage(chatID, "🔒 Ваш доступ заблокирован администратором.\n\nДля получения информации свяжитесь с администратором.")
-				return nil
-			}
-		} else if !exists && !strings.Contains(message.Text, "Связь с админом") {
-			// Check block for all actions except contact admin
-			// Note: Registration is blocked for already registered users
-			if b.isClientBlocked(userID) {
-				b.sendMessage(chatID, "🔒 Ваш доступ заблокирован администратором.\n\nДля получения информации свяжитесь с администратором.")
-				return nil
-			}
+		if b.isClientBlocked(userID) {
+			b.sendMessage(chatID, "🔒 Ваш доступ заблокирован администратором.\n\nДля получения информации свяжитесь с администратором.")
+			return nil
 		}
 	}
 
@@ -350,8 +339,8 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 
 	log.Printf("[INFO] Callback from user %d: %s", userID, data)
 
-	// Check if client is blocked (except for contact_admin callback and admins)
-	if !isAdmin && data != "contact_admin" {
+	// Check if client is blocked — block all non-admin callbacks
+	if !isAdmin {
 		if b.isClientBlocked(userID) {
 			b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 				CallbackQueryID: query.ID,
