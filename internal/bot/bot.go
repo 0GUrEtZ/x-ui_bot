@@ -1083,11 +1083,22 @@ func (b *Bot) handleAdminMessageSend(adminChatID int64, messageText string) {
 		return
 	}
 
-	// Send message to client
+	// Create reply button for user
+	replyButton := tu.InlineKeyboardButton("💬 Ответить").
+		WithCallbackData("contact_admin")
+
+	keyboard := &telego.InlineKeyboardMarkup{
+		InlineKeyboard: [][]telego.InlineKeyboardButton{
+			{replyButton},
+		},
+	}
+
+	// Send message to client with reply button
 	_, err = b.bot.SendMessage(context.Background(), &telego.SendMessageParams{
-		ChatID:    tu.ID(clientTgID),
-		Text:      fmt.Sprintf("📨 <b>Сообщение от администратора:</b>\n\n%s", messageText),
-		ParseMode: "HTML",
+		ChatID:      tu.ID(clientTgID),
+		Text:        fmt.Sprintf("📨 <b>Сообщение от администратора:</b>\n\n%s", messageText),
+		ParseMode:   "HTML",
+		ReplyMarkup: keyboard,
 	})
 
 	if err != nil {
