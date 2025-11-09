@@ -2121,7 +2121,7 @@ func (b *Bot) handleRegistrationDecision(requestUserID int64, adminChatID int64,
 				"👤 Аккаунт: %s\n"+
 				"📅 Срок: %d дней\n\n"+
 				"🔗 <b>Ваша VPN конфигурация:</b>\n"+
-				"<code>%s</code>\n\n"+
+				"<blockquote expandable>%s</blockquote>\n\n"+
 				"Скопируйте эту ссылку и добавьте её в ваше VPN приложение.%s",
 			html.EscapeString(req.Email),
 			req.Duration,
@@ -2328,7 +2328,7 @@ func (b *Bot) handleGetSubscriptionLink(chatID int64, userID int64) {
 
 	msg := fmt.Sprintf(
 		"✅ <b>Ваша VPN конфигурация:</b>\n\n"+
-			"<code>%s</code>%s%s",
+			"<blockquote expandable>%s</blockquote>%s%s",
 		html.EscapeString(subLink),
 		trafficText,
 		instructionsText,
@@ -2764,7 +2764,7 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 			"⏰ Истекает: %s\n"+
 			"📅 Осталось: %d дней %d часов\n\n"+
 			"🔗 <b>Ваша VPN конфигурация:</b>\n"+
-			"<code>%s</code>%s",
+			"<blockquote expandable>%s</blockquote>%s",
 		html.EscapeString(email),
 		duration,
 		newExpiryFormatted,
