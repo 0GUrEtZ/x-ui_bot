@@ -1200,6 +1200,8 @@ func (b *Bot) handleRegistrationStart(chatID int64, userID int64, userName strin
 	}
 	b.registrationMutex.Unlock()
 
+	log.Printf("[DEBUG] Registration request created for user %d, userName: %s, tgUsername: %s", userID, userName, tgUsername)
+
 	b.userStates[chatID] = "awaiting_email"
 	b.sendMessage(chatID, "📝 Регистрация нового клиента\n\n🔹 Шаг 1/2: Введите желаемый username:")
 }
@@ -1296,6 +1298,8 @@ func (b *Bot) handleRegistrationDuration(userID int64, chatID int64, duration in
 
 // sendRegistrationRequestToAdmins sends registration request to all admins
 func (b *Bot) sendRegistrationRequestToAdmins(req *RegistrationRequest) {
+	log.Printf("[DEBUG] Sending registration to admins - UserID: %d, TgUsername: '%s'", req.UserID, req.TgUsername)
+
 	// Format Telegram username
 	tgUsernameStr := ""
 	if req.TgUsername != "" {
@@ -1549,17 +1553,8 @@ func (b *Bot) handleGetSubscriptionLink(chatID int64, userID int64) {
 	}
 
 	msg := fmt.Sprintf(
-		"✅ <b>Ваш VPN конфигурация:</b>\n\n"+
-			"<code>%s</code>\n\n"+
-			"❔ <b>Как подключиться:</b>\n"+
-			"1. Скопируйте ссылку выше\n"+
-			"2. Откройте VPN приложение:\n"+
-			"   • V2rayNG (Android)\n"+
-			"   • V2rayN (Windows)\n"+
-			"   • Streisand (iOS)\n"+
-			"   • Nekoray (Windows/Linux)\n"+
-			"3. Используйте 'Импорт по ссылке' или 'Subscription'\n\n"+
-			"✅ Подключение готово к использованию!%s",
+		"✅ <b>Ваша VPN конфигурация:</b>\n\n"+
+			"<code>%s</code>%s",
 		html.EscapeString(subLink),
 		instructionsText,
 	)
