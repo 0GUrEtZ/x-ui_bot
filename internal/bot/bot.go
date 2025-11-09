@@ -752,6 +752,7 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 			totalGB := client["totalGB"]
 			expiryTime := client["expiryTime"]
 			enable := client["enable"]
+			tgId := client["tgId"]
 
 			// Get real traffic stats
 			var up, down, total int64
@@ -770,8 +771,21 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 				status = "🔴"
 			}
 
+			// Get Telegram username if tgId exists
+			tgUsernameStr := ""
+			if tgId != "" && tgId != "0" {
+				tgIDInt, err := strconv.ParseInt(tgId, 10, 64)
+				if err == nil && tgIDInt > 0 {
+					// Try to get chat info from Telegram
+					chatInfo, err := b.bot.GetChat(context.Background(), &telego.GetChatParams{ChatID: tu.ID(tgIDInt)})
+					if err == nil && chatInfo.Username != "" {
+						tgUsernameStr = fmt.Sprintf(" (@%s)", chatInfo.Username)
+					}
+				}
+			}
+
 			// Format client info message
-			msg += fmt.Sprintf("\n%d. %s <b>%s</b>\n", totalClients, status, html.EscapeString(email))
+			msg += fmt.Sprintf("\n%d. %s <b>%s</b>%s\n", totalClients, status, html.EscapeString(email), tgUsernameStr)
 			msg += fmt.Sprintf("   ⬆️ %s | ⬇️ %s | 📊 %s",
 				b.formatBytes(up),
 				b.formatBytes(down),
@@ -917,14 +931,32 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 			toggleButton := tu.InlineKeyboardButton(buttonText).
 				WithCallbackData(fmt.Sprintf("toggle_%d_%d", inboundID, i))
 
-			// Delete button on separate row
-			deleteButtonText := fmt.Sprintf("🗑️ Удалить %s", email)
-			deleteButton := tu.InlineKeyboardButton(deleteButtonText).
-				WithCallbackData(fmt.Sprintf("delete_%d_%d", inboundID, i))
+			// Get tgId for chat button
+			tgId := client["tgId"]
 
-			// Add buttons in separate rows (vertical layout)
+			// Second row: Chat and Delete buttons
+			var secondRow []telego.InlineKeyboardButton
+
+			// Add chat button if tgId exists
+			if tgId != "" && tgId != "0" {
+				tgIDInt, err := strconv.ParseInt(tgId, 10, 64)
+				if err == nil && tgIDInt > 0 {
+					chatButton := tu.InlineKeyboardButton("💬 Чат").
+						WithURL(fmt.Sprintf("tg://user?id=%d", tgIDInt))
+					secondRow = append(secondRow, chatButton)
+				}
+			}
+
+			// Add delete button
+			deleteButton := tu.InlineKeyboardButton("🗑️").
+				WithCallbackData(fmt.Sprintf("delete_%d_%d", inboundID, i))
+			secondRow = append(secondRow, deleteButton)
+
+			// Add buttons in rows (vertical layout with chat+delete in one row)
 			buttons = append(buttons, []telego.InlineKeyboardButton{toggleButton})
-			buttons = append(buttons, []telego.InlineKeyboardButton{deleteButton})
+			if len(secondRow) > 0 {
+				buttons = append(buttons, secondRow)
+			}
 		}
 
 		keyboard := &telego.InlineKeyboardMarkup{InlineKeyboard: buttons}
