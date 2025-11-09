@@ -89,6 +89,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient) (*Bot, error) {
 		userStates:        make(map[int64]string),
 		registrationReqs:  make(map[int64]*RegistrationRequest),
 		adminMessageState: make(map[int64]*AdminMessageState),
+		userMessageState:  make(map[int64]*UserMessageState),
 	}, nil
 }
 
