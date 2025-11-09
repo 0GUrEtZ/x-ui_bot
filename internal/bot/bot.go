@@ -908,8 +908,8 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 
 			b.sendMessageWithKeyboard(chatID, msg, keyboard)
 		} else {
-			// User is not registered - show registration menu
-			msg += "Выберите действие:"
+			// User is not registered - send welcome message with PDF
+			welcomeMsg := fmt.Sprintf("👋 Привет, %s!\n\nОзнакомьтесь с условиями VPN", firstName)
 
 			keyboard := tu.Keyboard(
 				tu.KeyboardRow(
@@ -917,7 +917,27 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 				),
 			).WithResizeKeyboard().WithIsPersistent()
 
-			b.sendMessageWithKeyboard(chatID, msg, keyboard)
+			// Check if welcome file URL is configured
+			if b.config.Telegram.WelcomeFile != "" {
+				// Send document with keyboard
+				_, err := b.bot.SendDocument(context.Background(), &telego.SendDocumentParams{
+					ChatID: tu.ID(chatID),
+					Document: telego.InputFile{
+						URL: b.config.Telegram.WelcomeFile,
+					},
+					Caption:     welcomeMsg,
+					ParseMode:   "HTML",
+					ReplyMarkup: keyboard,
+				})
+				if err != nil {
+					log.Printf("[ERROR] Failed to send welcome document: %v", err)
+					// Fallback to text message
+					b.sendMessageWithKeyboard(chatID, welcomeMsg, keyboard)
+				}
+			} else {
+				// No welcome file configured - send text message
+				b.sendMessageWithKeyboard(chatID, welcomeMsg, keyboard)
+			}
 		}
 	}
 }

@@ -26,10 +26,11 @@ type PanelConfig struct {
 
 // TelegramConfig holds Telegram bot configuration
 type TelegramConfig struct {
-	Token     string  `yaml:"token"`
-	AdminIDs  []int64 `yaml:"admin_ids"`
-	Proxy     string  `yaml:"proxy"`
-	APIServer string  `yaml:"api_server"`
+	Token       string  `yaml:"token"`
+	AdminIDs    []int64 `yaml:"admin_ids"`
+	Proxy       string  `yaml:"proxy"`
+	APIServer   string  `yaml:"api_server"`
+	WelcomeFile string  `yaml:"welcome_file"` // URL to welcome PDF file
 }
 
 // PaymentConfig holds payment information

@@ -4,6 +4,7 @@ telegram:
     - 123456789
   proxy: ""
   api_server: ""
+  welcome_file: "https://example.com/welcome.pdf"  # URL to welcome PDF file
 
 panel:
   url: "https://your-panel-url.com"

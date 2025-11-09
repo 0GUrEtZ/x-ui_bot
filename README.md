@@ -50,6 +50,7 @@ telegram:
   admin_ids: [123456789]
   proxy: ""                    # optional
   api_server: ""               # optional
+  welcome_file: "https://example.com/welcome.pdf"  # welcome PDF URL
 
 panel:
   url: "http://localhost:2053/path"
