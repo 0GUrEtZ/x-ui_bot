@@ -336,6 +336,7 @@ func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[
 	// Find and update the target client
 	found := false
 	var clientUUID string
+	var updatedClient map[string]interface{}
 	for i, cl := range clientsArray {
 		clientMap, ok := cl.(map[string]interface{})
 		if !ok {
@@ -352,6 +353,7 @@ func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[
 				clientMap[key] = value
 			}
 			clientsArray[i] = clientMap
+			updatedClient = clientMap // Save reference to updated client
 			found = true
 			break
 		}
@@ -363,17 +365,6 @@ func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[
 
 	if clientUUID == "" {
 		return fmt.Errorf("client UUID not found for %s", clientID)
-	}
-
-	// Get the updated client data
-	var updatedClient map[string]interface{}
-	for _, cl := range clientsArray {
-		if clientMap, ok := cl.(map[string]interface{}); ok {
-			if email, ok := clientMap["email"].(string); ok && email == clientID {
-				updatedClient = clientMap
-				break
-			}
-		}
 	}
 
 	// Convert client data to JSON (without array wrapper for single client update)

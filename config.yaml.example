@@ -1,7 +1,7 @@
 telegram:
   token: "YOUR_BOT_TOKEN_HERE"
   admin_ids:
-    - 123456789  # Replace with your Telegram user ID
+    - 123456789
   proxy: ""
   api_server: ""
 
@@ -11,11 +11,11 @@ panel:
   password: "your_password"
 
 payment:
-  bank: "Сбербанк"  # Bank name
-  phone_number: "+79001234567"  # Phone number for payment
-  instructions_url: "https://disk.yandex.ru/d/your-instructions-link"  # Link to cloud storage with setup instructions
+  bank: "Сбербанк"
+  phone_number: "+79001234567"
+  instructions_url: ""
   prices:
-    one_month: 300  # Price for 30 days in rubles
-    three_month: 800  # Price for 90 days in rubles
-    six_month: 1500  # Price for 180 days in rubles
-    one_year: 2800  # Price for 365 days in rubles
+    one_month: 300
+    three_month: 800
+    six_month: 1500
+    one_year: 2800

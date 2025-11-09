@@ -19,6 +19,7 @@ type PanelConfig struct {
 	URL      string `yaml:"url"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+	LimitIP  int    `yaml:"limit_ip"`
 }
 
 // TelegramConfig holds Telegram bot configuration
@@ -76,6 +77,10 @@ func Load() (*Config, error) {
 
 	if cfg.Panel.Password == "" {
 		return nil, fmt.Errorf("panel.password is required")
+	}
+
+	if cfg.Panel.LimitIP < 0 {
+		cfg.Panel.LimitIP = 0 // Reset to 0 (unlimited) if negative
 	}
 
 	return &cfg, nil
