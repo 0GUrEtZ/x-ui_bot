@@ -11,6 +11,7 @@ panel:
   password: "your_password"
   limit_ip: 5  # Limit of simultaneous IP connections per user (0 = unlimited)
   traffic_limit_gb: 100  # Traffic limit per user in GB (0 = unlimited)
+  backup_days: 7  # Backup database every N days to admins (0 = disabled)
 
 payment:
   bank: "Сбербанк"

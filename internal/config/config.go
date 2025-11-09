@@ -21,6 +21,7 @@ type PanelConfig struct {
 	Password       string `yaml:"password"`
 	LimitIP        int    `yaml:"limit_ip"`
 	TrafficLimitGB int    `yaml:"traffic_limit_gb"`
+	BackupDays     int    `yaml:"backup_days"` // Backup interval in days (0 = disabled)
 }
 
 // TelegramConfig holds Telegram bot configuration

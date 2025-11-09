@@ -756,3 +756,33 @@ func (c *APIClient) GetClientLink(email string) (string, error) {
 	subURL := fmt.Sprintf("%s%s%s", c.baseURL, subPath, clientSubID)
 	return subURL, nil
 }
+
+// GetDatabaseBackup downloads x-ui database backup
+func (c *APIClient) GetDatabaseBackup() ([]byte, error) {
+	url := c.baseURL + "/panel/api/server/getDb"
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Accept", "application/octet-stream")
+	if c.sessionID != "" {
+		req.AddCookie(&http.Cookie{
+			Name:  "3x-ui",
+			Value: c.sessionID,
+		})
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to download backup: status %d", resp.StatusCode)
+	}
+
+	return io.ReadAll(resp.Body)
+}

@@ -91,6 +91,7 @@ type Bot struct {
 	broadcastState    map[int64]*BroadcastState    // State for admin creating broadcast
 	rateLimits        map[int64]*RateLimitEntry    // Rate limiting per user
 	rateLimitMutex    sync.Mutex
+	stopBackup        chan struct{} // Signal to stop backup scheduler
 }
 
 // NewBot creates a new Bot instance
@@ -110,6 +111,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient) (*Bot, error) {
 		userMessageState:  make(map[int64]*UserMessageState),
 		broadcastState:    make(map[int64]*BroadcastState),
 		rateLimits:        make(map[int64]*RateLimitEntry),
+		stopBackup:        make(chan struct{}),
 	}, nil
 }
 
@@ -149,6 +151,11 @@ func (b *Bot) Start() error {
 		b.isRunning = true
 	}
 
+	// Start backup scheduler if enabled
+	if b.config.Panel.BackupDays > 0 {
+		go b.backupScheduler()
+	}
+
 	return nil
 }
 
@@ -160,6 +167,9 @@ func (b *Bot) Stop() {
 	}
 	if b.handler != nil {
 		b.handler.Stop()
+	}
+	if b.stopBackup != nil {
+		close(b.stopBackup)
 	}
 	b.isRunning = false
 }
@@ -361,6 +371,12 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 			return nil
 		}
 		b.handleBroadcastStart(chatID)
+	case "💾 Бэкап БД":
+		if !isAdmin {
+			b.sendMessage(chatID, "⛔ У вас нет прав")
+			return nil
+		}
+		b.handleBackupRequest(chatID)
 	default:
 		// Handle buttons with emoji (encoding issues)
 		if strings.Contains(message.Text, "Зарегистрироваться") {
@@ -779,6 +795,7 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 			),
 			tu.KeyboardRow(
 				tu.KeyboardButton("📢 Сделать объявление"),
+				tu.KeyboardButton("💾 Бэкап БД"),
 			),
 		).WithResizeKeyboard().WithIsPersistent()
 
@@ -2986,4 +3003,113 @@ func (b *Bot) handleBroadcastCancel(chatID int64, messageID int) {
 
 	b.editMessageText(chatID, messageID, "❌ Рассылка отменена")
 	log.Printf("[INFO] Broadcast cancelled by admin %d", chatID)
+}
+
+// backupScheduler periodically sends database backups to admins
+func (b *Bot) backupScheduler() {
+	log.Printf("[INFO] Backup scheduler started (interval: %d days)", b.config.Panel.BackupDays)
+
+	ticker := time.NewTicker(time.Duration(b.config.Panel.BackupDays) * 24 * time.Hour)
+	defer ticker.Stop()
+
+	// Send initial backup on start
+	time.Sleep(1 * time.Minute) // Wait 1 minute after bot start
+	b.sendBackupToAdmins()
+
+	for {
+		select {
+		case <-ticker.C:
+			b.sendBackupToAdmins()
+		case <-b.stopBackup:
+			log.Println("[INFO] Backup scheduler stopped")
+			return
+		}
+	}
+}
+
+// namedBytesReader wraps bytes data to implement NamedReader interface
+type namedBytesReader struct {
+	*strings.Reader
+	name string
+}
+
+func (r *namedBytesReader) Name() string {
+	return r.name
+}
+
+// sendBackupToAdmins sends database backup to all admins
+func (b *Bot) sendBackupToAdmins() {
+	log.Println("[INFO] Starting database backup...")
+
+	// Download backup from panel
+	backup, err := b.apiClient.GetDatabaseBackup()
+	if err != nil {
+		log.Printf("[ERROR] Failed to download backup: %v", err)
+		for _, adminID := range b.config.Telegram.AdminIDs {
+			b.sendMessage(adminID, fmt.Sprintf("❌ Ошибка создания бэкапа: %v", err))
+		}
+		return
+	}
+
+	// Send to all admins
+	filename := fmt.Sprintf("x-ui_%s.db", time.Now().Format("2006-01-02_15-04"))
+	for _, adminID := range b.config.Telegram.AdminIDs {
+		reader := &namedBytesReader{
+			Reader: strings.NewReader(string(backup)),
+			name:   filename,
+		}
+
+		_, err := b.bot.SendDocument(context.Background(), &telego.SendDocumentParams{
+			ChatID: tu.ID(adminID),
+			Document: telego.InputFile{
+				File: reader,
+			},
+			Caption:   fmt.Sprintf("📦 <b>Backup Database</b>\n\n🕐 Time: %s\n💾 Size: %.2f MB", time.Now().Format("2006-01-02 15:04:05"), float64(len(backup))/1024/1024),
+			ParseMode: "HTML",
+		})
+
+		if err != nil {
+			log.Printf("[ERROR] Failed to send backup to admin %d: %v", adminID, err)
+		} else {
+			log.Printf("[INFO] Backup sent to admin %d", adminID)
+		}
+	}
+}
+
+// handleBackupRequest handles manual backup request from admin
+func (b *Bot) handleBackupRequest(chatID int64) {
+	log.Printf("[INFO] Manual backup requested by admin %d", chatID)
+
+	b.sendMessage(chatID, "⏳ Создаю бэкап базы данных...")
+
+	// Download backup from panel
+	backup, err := b.apiClient.GetDatabaseBackup()
+	if err != nil {
+		log.Printf("[ERROR] Failed to download backup: %v", err)
+		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка создания бэкапа: %v", err))
+		return
+	}
+
+	// Send backup to requesting admin
+	filename := fmt.Sprintf("x-ui_%s.db", time.Now().Format("2006-01-02_15-04"))
+	reader := &namedBytesReader{
+		Reader: strings.NewReader(string(backup)),
+		name:   filename,
+	}
+
+	_, err = b.bot.SendDocument(context.Background(), &telego.SendDocumentParams{
+		ChatID: tu.ID(chatID),
+		Document: telego.InputFile{
+			File: reader,
+		},
+		Caption:   fmt.Sprintf("📦 <b>Database Backup</b>\n\n🕐 Time: %s\n💾 Size: %.2f MB", time.Now().Format("2006-01-02 15:04:05"), float64(len(backup))/1024/1024),
+		ParseMode: "HTML",
+	})
+
+	if err != nil {
+		log.Printf("[ERROR] Failed to send backup to admin %d: %v", chatID, err)
+		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка отправки бэкапа: %v", err))
+	} else {
+		log.Printf("[INFO] Manual backup sent to admin %d", chatID)
+	}
 }
