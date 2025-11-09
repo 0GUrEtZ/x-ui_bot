@@ -321,6 +321,10 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 			b.handleSubscriptionStatus(chatID, userID)
 		} else if strings.Contains(message.Text, "Продлить подписку") {
 			b.handleExtendSubscription(chatID, userID)
+		} else if strings.Contains(message.Text, "Обновить username") {
+			// Get current Telegram username
+			currentUsername := message.From.Username
+			b.handleUpdateUsername(chatID, userID, currentUsername)
 		} else if strings.Contains(message.Text, "Связь с админом") {
 			b.handleContactAdmin(chatID, userID)
 		}
@@ -710,7 +714,10 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 					),
 					tu.KeyboardRow(
 						tu.KeyboardButton("📊 Статус подписки"),
-						tu.KeyboardButton("💬 Связь с админом"),
+						tu.KeyboardButton("� Обновить username"),
+					),
+					tu.KeyboardRow(
+						tu.KeyboardButton("�💬 Связь с админом"),
 					),
 				).WithResizeKeyboard().WithIsPersistent()
 			} else {
@@ -724,6 +731,7 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 						tu.KeyboardButton("🔄 Продлить подписку"),
 					),
 					tu.KeyboardRow(
+						tu.KeyboardButton("🔄 Обновить username"),
 						tu.KeyboardButton("💬 Связь с админом"),
 					),
 				).WithResizeKeyboard().WithIsPersistent()
@@ -2187,6 +2195,54 @@ func (b *Bot) handleExtensionRequest(userID int64, chatID int64, messageID int, 
 	))
 
 	log.Printf("[INFO] Extension request sent for user %d, email: %s, duration: %d days", userID, email, duration)
+}
+
+// handleUpdateUsername updates user's username (subId) in the panel
+func (b *Bot) handleUpdateUsername(chatID int64, userID int64, currentUsername string) {
+	log.Printf("[INFO] User %d requested username update to: %s", userID, currentUsername)
+
+	// Get client info
+	clientInfo, err := b.apiClient.GetClientByTgID(userID)
+	if err != nil {
+		b.sendMessage(chatID, "❌ Вы не зарегистрированы в системе")
+		return
+	}
+
+	email := ""
+	if e, ok := clientInfo["email"].(string); ok {
+		email = e
+	}
+
+	// Get inbound ID
+	inboundID := 0
+	if id, ok := clientInfo["_inboundID"].(float64); ok {
+		inboundID = int(id)
+	}
+
+	if inboundID == 0 {
+		b.sendMessage(chatID, "❌ Ошибка: не удалось определить inbound ID")
+		return
+	}
+
+	// Update subId with current Telegram username
+	newSubId := currentUsername
+	if newSubId == "" {
+		newSubId = fmt.Sprintf("user_%d", userID)
+	}
+
+	// Preserve all other fields, only update subId
+	clientInfo["subId"] = newSubId
+
+	// Call UpdateClient
+	err = b.apiClient.UpdateClient(inboundID, email, clientInfo)
+	if err != nil {
+		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка обновления: %v", err))
+		log.Printf("[ERROR] Failed to update username for user %d: %v", userID, err)
+		return
+	}
+
+	b.sendMessage(chatID, fmt.Sprintf("✅ Username успешно обновлен!\n\n📝 Новый username: @%s", newSubId))
+	log.Printf("[INFO] Username updated for user %d (email: %s) to: %s", userID, email, newSubId)
 }
 
 // handleExtensionApproval processes admin approval for subscription extension
