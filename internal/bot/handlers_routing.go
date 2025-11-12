@@ -59,6 +59,8 @@ func (b *Bot) handleCommand(ctx *th.Context, message telego.Message) error {
 		}
 	case "clients":
 		b.handleClients(chatID, isAdmin)
+	case "forecast":
+		b.handleForecast(chatID, isAdmin)
 	default:
 		// Check if it's a client action command: /client_enable_1_0 or /client_disable_1_0
 		if strings.HasPrefix(command, "client_") && isAdmin {
@@ -187,6 +189,12 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 			return nil
 		}
 		b.handleBackupRequest(chatID)
+	case "📈 Прогноз трафика":
+		if !isAdmin {
+			b.sendMessage(chatID, "⛔ У вас нет прав")
+			return nil
+		}
+		b.handleForecast(chatID, isAdmin)
 	default:
 		// Handle buttons with emoji (encoding issues)
 		if strings.Contains(message.Text, "Ознакомиться с условиями") {
@@ -638,6 +646,52 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 			Text:            "❌ Отменено",
 		}); err != nil {
 			b.logger.Errorf("Failed to answer callback query for broadcast cancel: %v", err)
+		}
+		return nil
+	}
+
+	// Handle forecast refresh
+	if data == "forecast_refresh" {
+		// Get updated forecast data
+		forecast, err := b.forecastService.CalculateForecast()
+		if err != nil {
+			b.logger.Errorf("Failed to refresh forecast for admin %d: %v", chatID, err)
+			if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+				CallbackQueryID: query.ID,
+				Text:            "❌ Ошибка обновления прогноза",
+				ShowAlert:       true,
+			}); err != nil {
+				b.logger.Errorf("Failed to answer forecast refresh error callback: %v", err)
+			}
+			return nil
+		}
+
+		// Format and update forecast message
+		message := b.forecastService.FormatForecastMessage(forecast)
+
+		// Create keyboard with refresh button
+		keyboard := tu.InlineKeyboard(
+			tu.InlineKeyboardRow(
+				tu.InlineKeyboardButton("🔄 Обновить").WithCallbackData("forecast_refresh"),
+			),
+		)
+
+		// Edit the message with updated forecast
+		if _, err := b.bot.EditMessageText(context.Background(), &telego.EditMessageTextParams{
+			ChatID:      tu.ID(chatID),
+			MessageID:   messageID,
+			Text:        message,
+			ParseMode:   "HTML",
+			ReplyMarkup: keyboard,
+		}); err != nil {
+			b.logger.Errorf("Failed to edit forecast message: %v", err)
+		}
+
+		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "✅ Прогноз обновлен",
+		}); err != nil {
+			b.logger.Errorf("Failed to answer forecast refresh callback: %v", err)
 		}
 		return nil
 	}

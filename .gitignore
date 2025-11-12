@@ -28,6 +28,9 @@ data/
 *.backup
 *.bak
 
+# Technical specifications
+specs/
+
 # IDE
 .vscode/
 .idea/

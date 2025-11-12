@@ -31,6 +31,9 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 				tu.KeyboardButton("📢 Сделать объявление"),
 				tu.KeyboardButton("💾 Бэкап БД"),
 			),
+			tu.KeyboardRow(
+				tu.KeyboardButton("📈 Прогноз трафика"),
+			),
 		).WithResizeKeyboard().WithIsPersistent()
 
 		b.sendMessageWithKeyboard(chatID, msg, keyboard)

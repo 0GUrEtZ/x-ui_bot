@@ -10,8 +10,8 @@ import (
 	"x-ui-bot/internal/bot/services"
 	"x-ui-bot/internal/config"
 	"x-ui-bot/internal/logger"
-	"x-ui-bot/internal/storage"
 	"x-ui-bot/pkg/client"
+	"x-ui-bot/sqlite"
 
 	"math/rand"
 
@@ -29,11 +29,11 @@ func generateRandomString(length int) string {
 	return string(b)
 }
 
-// Use types from storage package
-type RegistrationRequest = storage.RegistrationRequest
-type AdminMessageState = storage.AdminMessageState
-type UserMessageState = storage.UserMessageState
-type BroadcastState = storage.BroadcastState
+// Use types from sqlite package
+type RegistrationRequest = sqlite.RegistrationRequest
+type AdminMessageState = sqlite.AdminMessageState
+type UserMessageState = sqlite.UserMessageState
+type BroadcastState = sqlite.BroadcastState
 
 // Bot represents the Telegram bot
 type Bot struct {
@@ -52,6 +52,7 @@ type Bot struct {
 	subscriptionService *services.SubscriptionService
 	backupService       *services.BackupService
 	broadcastService    *services.BroadcastService
+	forecastService     *services.ForecastService
 
 	// Middleware
 	authMiddleware *middleware.AuthMiddleware
@@ -62,7 +63,7 @@ type Bot struct {
 }
 
 // Storage interface for bot data persistence
-type Storage = storage.Storage
+type Storage = sqlite.Storage
 
 // NewBot creates a new Bot instance
 func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bot, error) {
@@ -80,6 +81,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bo
 	subscriptionService := services.NewSubscriptionService(log)
 	backupService := services.NewBackupService(apiClient, bot, cfg, log)
 	broadcastService := services.NewBroadcastService(apiClient, bot, log)
+	forecastService := services.NewForecastService(apiClient, store, log)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg)
@@ -95,6 +97,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bo
 		subscriptionService: subscriptionService,
 		backupService:       backupService,
 		broadcastService:    broadcastService,
+		forecastService:     forecastService,
 		authMiddleware:      authMiddleware,
 		rateLimiter:         rateLimiter,
 		stopBackup:          make(chan struct{}),

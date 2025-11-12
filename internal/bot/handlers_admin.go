@@ -599,3 +599,31 @@ func (b *Bot) handleBackupRequest(chatID int64) {
 		b.logger.Infof("Manual backup sent to admin %d", chatID)
 	}
 }
+
+// handleForecast handles the /forecast command for traffic forecasting
+func (b *Bot) handleForecast(chatID int64, isAdmin bool) {
+	if !isAdmin {
+		b.sendMessage(chatID, "⛔ У вас нет прав для просмотра прогноза трафика")
+		return
+	}
+
+	// Get forecast data
+	forecast, err := b.forecastService.CalculateForecast()
+	if err != nil {
+		b.logger.Errorf("Failed to calculate forecast for admin %d: %v", chatID, err)
+		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка расчета прогноза: %v", err))
+		return
+	}
+
+	// Format and send forecast message
+	message := b.forecastService.FormatForecastMessage(forecast)
+
+	// Create keyboard with refresh button
+	keyboard := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("🔄 Обновить").WithCallbackData("forecast_refresh"),
+		),
+	)
+
+	b.sendMessageWithInlineKeyboard(chatID, message, keyboard)
+}

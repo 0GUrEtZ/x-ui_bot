@@ -9,8 +9,8 @@ import (
 	"x-ui-bot/internal/config"
 	"x-ui-bot/internal/logger"
 	"x-ui-bot/internal/shutdown"
-	"x-ui-bot/internal/storage"
 	"x-ui-bot/pkg/client"
+	"x-ui-bot/sqlite"
 )
 
 func main() {
@@ -24,7 +24,7 @@ func main() {
 	apiClient := client.NewAPIClient(cfg.Panel.URL, cfg.Panel.Username, cfg.Panel.Password)
 
 	// Create storage
-	store, err := storage.NewSQLiteStorage("/root/data/bot.db")
+	store, err := sqlite.NewSQLiteStorage("./bot.db")
 	if err != nil {
 		log.Fatalf("Failed to create storage: %v", err)
 	}
