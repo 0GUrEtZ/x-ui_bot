@@ -19,6 +19,15 @@ vendor/
 .env
 config.yaml
 
+# Database
+data/
+*.db
+*.sqlite
+
+# Backup files
+*.backup
+*.bak
+
 # IDE
 .vscode/
 .idea/

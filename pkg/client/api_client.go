@@ -49,7 +49,7 @@ func (c *APIClient) Login() error {
 	if err != nil {
 		return fmt.Errorf("login request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -102,7 +102,7 @@ func (c *APIClient) GetStatus() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		if err := c.Login(); err != nil {
@@ -126,7 +126,7 @@ func (c *APIClient) GetInbounds() ([]map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		if err := c.Login(); err != nil {
@@ -167,7 +167,7 @@ func (c *APIClient) GetInbound(id int) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		if err := c.Login(); err != nil {
@@ -199,7 +199,7 @@ func (c *APIClient) ResetClientTraffic(email string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		if err := c.Login(); err != nil {
@@ -229,7 +229,7 @@ func (c *APIClient) GetClientTraffics(email string) (map[string]interface{}, err
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		if err := c.Login(); err != nil {
@@ -262,7 +262,7 @@ func (c *APIClient) GetClientTrafficsById(inboundID int) ([]map[string]interface
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		if err := c.Login(); err != nil {
@@ -385,7 +385,7 @@ func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[
 		log.Printf("[ERROR] doRequest failed: %v", err)
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	log.Printf("[INFO] Got response with status: %d", resp.StatusCode)
 
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -437,7 +437,7 @@ func (c *APIClient) DeleteClient(inboundID int, clientID string) error {
 		log.Printf("[ERROR] DeleteClient request failed: %v", err)
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	log.Printf("[INFO] DeleteClient got response with status: %d", resp.StatusCode)
 
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -492,7 +492,7 @@ func (c *APIClient) AddClient(inboundID int, clientData map[string]interface{}) 
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		if err := c.Login(); err != nil {
@@ -583,7 +583,7 @@ func (c *APIClient) GetPanelSettings() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get panel settings: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to get settings, status: %d", resp.StatusCode)
@@ -615,7 +615,7 @@ func (c *APIClient) GetClientLink(email string) (string, error) {
 	// Try to get the link directly from API
 	resp, err := c.doRequest("GET", fmt.Sprintf("/panel/api/inbounds/getClientLink/%s", email), nil, true)
 	if err == nil {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode == http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
@@ -627,7 +627,6 @@ func (c *APIClient) GetClientLink(email string) (string, error) {
 				return result.Obj, nil
 			}
 		}
-	} else {
 	}
 
 	// Fallback: construct link manually using panel settings
@@ -778,7 +777,7 @@ func (c *APIClient) GetDatabaseBackup() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to download backup: status %d", resp.StatusCode)

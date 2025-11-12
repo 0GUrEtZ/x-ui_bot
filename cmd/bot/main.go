@@ -1,13 +1,15 @@
 package main
 
 import (
+	"context"
 	"log"
-	"os"
-	"os/signal"
-	"syscall"
+	"time"
 
 	"x-ui-bot/internal/bot"
 	"x-ui-bot/internal/config"
+	"x-ui-bot/internal/logger"
+	"x-ui-bot/internal/shutdown"
+	"x-ui-bot/internal/storage"
 	"x-ui-bot/pkg/client"
 )
 
@@ -21,8 +23,14 @@ func main() {
 	// Create API client
 	apiClient := client.NewAPIClient(cfg.Panel.URL, cfg.Panel.Username, cfg.Panel.Password)
 
+	// Create storage
+	store, err := storage.NewSQLiteStorage("/root/data/bot.db")
+	if err != nil {
+		log.Fatalf("Failed to create storage: %v", err)
+	}
+
 	// Create and start bot
-	tgBot, err := bot.NewBot(cfg, apiClient)
+	tgBot, err := bot.NewBot(cfg, apiClient, store)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
@@ -33,12 +41,24 @@ func main() {
 
 	log.Println("Bot started successfully")
 
-	// Wait for interrupt signal
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	<-sigChan
+	// Initialize logger and shutdown manager with 30s graceful timeout
+	appLogger := logger.GetLogger()
+	shutdownMgr := shutdown.NewManager(appLogger, 30*time.Second)
 
-	log.Println("Shutting down bot...")
-	tgBot.Stop()
-	log.Println("Bot stopped")
+	// Register cleanup functions
+	shutdownMgr.Register(func(ctx context.Context) error {
+		log.Println("Stopping bot...")
+		tgBot.Stop()
+		return nil
+	})
+
+	shutdownMgr.Register(func(ctx context.Context) error {
+		log.Println("Closing storage...")
+		return store.Close()
+	})
+
+	// Wait for shutdown signal (blocks until SIGINT/SIGTERM)
+	shutdownMgr.Wait()
+
+	log.Println("Bot stopped gracefully")
 }

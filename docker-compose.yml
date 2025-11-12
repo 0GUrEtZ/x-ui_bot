@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./config.yaml:/root/config.yaml:ro
+      - ./terms.txt:/root/terms.txt:ro
+      - ./data:/root/data
     logging:
       driver: "json-file"
       options:

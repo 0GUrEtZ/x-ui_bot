@@ -1,36 +1,54 @@
 # 3X-UI Telegram Bot
 
-Telegram-бот для управления VPN через 3X-UI панель.
+Telegram interface for 3X-UI panel management with moderation workflow and subscription handling.
 
-## Функции
+## Technical Stack
 
-**Пользователи:**
-- Регистрация с модерацией
-- Получение VPN конфигурации
-- Выбор тарифа (1/3/6/12 месяцев)
-- Пробный период (настраивается)
-- Статистика трафика и срок действия
-- Продление подписки
-- Изменение email
-- Связь с администратором
+- **Go 1.24.6** - Core language
+- **SQLite** - Local state and cache persistence
+- **3X-UI API** - VPN panel integration via HTTP
+- **Telego** - Telegram Bot API client
+- **Zerolog** - Structured logging
 
-**Администраторы:**
-- Модерация регистраций
-- Список клиентов с поиском
-- Управление клиентами (блокировка, удаление)
-- Изменение срока действия
-- Модерация продлений
-- Массовые рассылки
-- Прямая связь с пользователями
-- Автоматические бэкапы базы данных
+## Architecture
 
-**Безопасность:**
-- Rate limiting (10 req/min)
-- Валидация email
-- TTL сессий (24ч)
-- Кэш инвалидация
+```
+cmd/bot/              # Application entry point
+internal/
+├── bot/              # Bot core (handlers, services, middleware)
+├── config/           # Configuration management
+├── storage/          # SQLite persistence layer
+├── logger/           # Structured logging
+└── shutdown/         # Graceful shutdown manager
+pkg/client/           # 3X-UI HTTP API client
+```
 
-## Установка
+Detailed architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+
+## Features
+
+**User Flow:**
+- Registration with admin approval
+- Multi-tier subscriptions (1/3/6/12 months)
+- Trial period support
+- Traffic and expiry monitoring
+- Subscription renewal requests
+- Direct admin messaging
+
+**Admin Functions:**
+- Registration moderation
+- Client management (block, delete, modify)
+- Bulk announcements
+- Manual database backups
+- Direct user communication
+
+**System:**
+- Rate limiting (10 req/min per user)
+- Session TTL (24h)
+- Client data caching with invalidation
+- Automatic periodic backups
+
+## Installation
 
 ```bash
 git clone https://github.com/0GUrEtZ/x-ui_bot.git
@@ -40,31 +58,35 @@ nano config.yaml
 docker-compose up -d
 ```
 
-Без Docker: `go run ./cmd/bot`
+**Without Docker:**
+```bash
+go run ./cmd/bot
+```
 
-## Конфигурация
+## Configuration
 
+`config.yaml`:
 ```yaml
 telegram:
   token: "BOT_TOKEN"
   admin_ids: [123456789]
-  proxy: ""                    # optional
-  api_server: ""               # optional
-  welcome_file: "https://example.com/welcome.pdf"  # welcome PDF URL
+  proxy: ""                    # SOCKS5 proxy (optional)
+  api_server: ""               # Custom API endpoint (optional)
+  welcome_file: "URL"          # Welcome PDF URL
 
 panel:
-  url: "http://localhost:2053/path"
+  url: "http://host:port/path"
   username: "admin"
   password: "password"
-  limit_ip: 5                  # 0 = unlimited
-  traffic_limit_gb: 100        # 0 = unlimited
-  backup_days: 7               # database backup interval (0 = disabled)
+  limit_ip: 5                  # Client IP limit (0 = unlimited)
+  traffic_limit_gb: 100        # Traffic limit (0 = unlimited)
+  backup_days: 7               # Auto-backup interval (0 = disabled)
 
 payment:
   bank: "Bank Name"
   phone_number: "+1234567890"
-  instructions_url: "https://docs.example.com"
-  trial_days: 3                # 0 = disabled
+  instructions_url: "https://docs.example.com/payment"
+  trial_days: 3                # Trial period duration (0 = disabled)
   prices:
     one_month: 300
     three_month: 800
@@ -72,40 +94,26 @@ payment:
     one_year: 2800
 ```
 
-## Команды
+## Code Quality
 
-**Пользователи:**
-- `/start` - главное меню
-- `/id` - получить ID
-- `📱 Моя подписка` - конфигурация + статус
-- `⏰ Продлить подписку` - запрос продления
-- `⚙️ Настройки` - изменить email
-- `💬 Связь с админом` - отправить сообщение
+- **0 linting issues** (golangci-lint: errcheck, unused, staticcheck, ineffassign)
+- Comprehensive error handling for all API calls
+- No dead code or unused functions
+- Clean compilation (go build, go vet)
+- Optimized dependencies (go mod tidy)
 
-**Администраторы:**
-- `/clients` - список клиентов
-- `/status` - статус панели
-- `/usage <email>` - статистика клиента
-- `📢 Сделать объявление` - массовая рассылка
-- `💾 Бэкап БД` - создать бэкап вручную
+## Requirements
 
-## Логи
+- 3X-UI panel with API access
+- Docker + Docker Compose (recommended)
+- Go 1.24+ (for native builds)
+
+## Logs
 
 ```bash
 docker logs x-ui-bot -f
 ```
 
-## Особенности
+## Version
 
-- Rate limiting: 10 req/min
-- Кэш клиентов
-- Автоочистка сессий (1ч)
-- Валидация email
-- Изоляция данных
-- Автоматические и ручные бэкапы БД
-
-## Требования
-
-- 3X-UI панель с API
-- Docker + Docker Compose
-- Go 1.23+ (без Docker)
+**v1.1.0** - Code quality improvements, architecture documentation, comprehensive error handling
