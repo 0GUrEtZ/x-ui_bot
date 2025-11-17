@@ -152,35 +152,39 @@ func (fs *ForecastService) CollectTrafficSnapshot() error {
 			continue
 		}
 
-		// Extract clients from inbound settings
-		settings, ok := inbound["settings"].(map[string]interface{})
+		// Get inbound ID
+		inboundID, ok := inbound["id"].(float64)
 		if !ok {
+			fs.logger.Warn("Inbound missing ID field")
 			continue
 		}
 
-		clients, ok := settings["clients"].([]interface{})
-		if !ok {
+		// Get client traffic statistics for this inbound
+		clientStats, err := fs.apiClient.GetClientTrafficsById(int(inboundID))
+		if err != nil {
+			fs.logger.Errorf("Failed to get client traffics for inbound %d: %v", int(inboundID), err)
 			continue
 		}
 
-		for _, clientData := range clients {
-			clientMap, ok := clientData.(map[string]interface{})
-			if !ok {
-				continue
-			}
-
-			email, ok := clientMap["email"].(string)
+		// Process each client's traffic data
+		for _, clientData := range clientStats {
+			email, ok := clientData["email"].(string)
 			if !ok || email == "" {
 				continue
 			}
 
-			// Get traffic stats
+			// Get traffic stats (up and down are in bytes)
 			var totalBytes uint64
-			if up, ok := clientMap["up"].(float64); ok {
+			if up, ok := clientData["up"].(float64); ok {
 				totalBytes += uint64(up)
 			}
-			if down, ok := clientMap["down"].(float64); ok {
+			if down, ok := clientData["down"].(float64); ok {
 				totalBytes += uint64(down)
+			}
+
+			// Skip if no traffic data
+			if totalBytes == 0 {
+				continue
 			}
 
 			// Save snapshot
