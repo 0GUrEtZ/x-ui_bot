@@ -16,6 +16,7 @@ type ForecastService struct {
 	storage   sqlite.Storage
 	logger    *logger.Logger
 	cache     *forecastCache
+	stopChan  chan struct{}
 }
 
 // ForecastData contains calculated forecast information
@@ -47,6 +48,7 @@ func NewForecastService(apiClient *client.APIClient, storage sqlite.Storage, log
 		cache: &forecastCache{
 			timestamp: time.Now().Add(-time.Hour), // Expired cache initially
 		},
+		stopChan: make(chan struct{}),
 	}
 }
 
@@ -292,4 +294,58 @@ func (fs *ForecastService) FormatForecastMessage(data *ForecastData) string {
 	)
 
 	return message
+}
+
+// StartPeriodicCollection starts automatic traffic data collection every 4 hours
+func (fs *ForecastService) StartPeriodicCollection() {
+	fs.logger.Info("Starting periodic traffic collection (every 4 hours)")
+
+	// Collect initial snapshot immediately
+	go func() {
+		if err := fs.collectAndCleanup(); err != nil {
+			fs.logger.Errorf("Failed initial traffic collection: %v", err)
+		}
+	}()
+
+	// Start periodic collection
+	go func() {
+		ticker := time.NewTicker(4 * time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				if err := fs.collectAndCleanup(); err != nil {
+					fs.logger.Errorf("Failed periodic traffic collection: %v", err)
+				}
+			case <-fs.stopChan:
+				fs.logger.Info("Stopping periodic traffic collection")
+				return
+			}
+		}
+	}()
+}
+
+// StopPeriodicCollection stops the periodic traffic collection
+func (fs *ForecastService) StopPeriodicCollection() {
+	close(fs.stopChan)
+}
+
+// collectAndCleanup collects traffic snapshot and cleans up old data
+func (fs *ForecastService) collectAndCleanup() error {
+	fs.logger.Info("Running scheduled traffic collection")
+
+	// Collect snapshot
+	if err := fs.CollectTrafficSnapshot(); err != nil {
+		return fmt.Errorf("failed to collect snapshot: %w", err)
+	}
+
+	// Cleanup old data (older than 30 days)
+	if err := fs.CleanupOldData(); err != nil {
+		fs.logger.Warnf("Failed to cleanup old traffic data: %v", err)
+		// Don't fail the whole operation for cleanup errors
+	}
+
+	fs.logger.Info("Scheduled traffic collection completed successfully")
+	return nil
 }

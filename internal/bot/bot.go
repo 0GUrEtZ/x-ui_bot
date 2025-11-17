@@ -145,6 +145,9 @@ func (b *Bot) Start() error {
 		go b.backupScheduler()
 	}
 
+	// Start periodic traffic collection (every 4 hours)
+	b.forecastService.StartPeriodicCollection()
+
 	return nil
 }
 
@@ -161,6 +164,11 @@ func (b *Bot) Stop() {
 	}
 	if b.stopBackup != nil {
 		close(b.stopBackup)
+	}
+
+	// Stop periodic traffic collection
+	if b.forecastService != nil {
+		b.forecastService.StopPeriodicCollection()
 	}
 
 	// Close storage
