@@ -9,16 +9,19 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	Panel    PanelConfig    `yaml:"panel"`
+	Panel    PanelConfig    `yaml:"panel"`  // Legacy single panel config
+	Panels   []PanelConfig  `yaml:"panels"` // Multi-panel config
 	Telegram TelegramConfig `yaml:"telegram"`
 	Payment  PaymentConfig  `yaml:"payment"`
 }
 
 // PanelConfig holds 3x-ui panel configuration
 type PanelConfig struct {
+	Name           string `yaml:"name"` // Display name for multi-panel setup
 	URL            string `yaml:"url"`
 	Username       string `yaml:"username"`
 	Password       string `yaml:"password"`
+	Enabled        bool   `yaml:"enabled"` // For multi-panel setup (default: true)
 	LimitIP        int    `yaml:"limit_ip"`
 	TrafficLimitGB int    `yaml:"traffic_limit_gb"`
 	BackupDays     int    `yaml:"backup_days"` // Backup interval in days (0 = disabled)
@@ -71,20 +74,49 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("telegram.admin_ids is required")
 	}
 
-	if cfg.Panel.URL == "" {
-		return nil, fmt.Errorf("panel.url is required")
+	// Handle backward compatibility: convert single panel to multi-panel format
+	if cfg.Panel.URL != "" && len(cfg.Panels) == 0 {
+		// Legacy single panel config - convert to multi-panel
+		cfg.Panels = []PanelConfig{{
+			Name:           "Main Server",
+			URL:            cfg.Panel.URL,
+			Username:       cfg.Panel.Username,
+			Password:       cfg.Panel.Password,
+			Enabled:        true,
+			LimitIP:        cfg.Panel.LimitIP,
+			TrafficLimitGB: cfg.Panel.TrafficLimitGB,
+			BackupDays:     cfg.Panel.BackupDays,
+		}}
 	}
 
-	if cfg.Panel.Username == "" {
-		return nil, fmt.Errorf("panel.username is required")
+	// Validate panels configuration
+	if len(cfg.Panels) == 0 {
+		return nil, fmt.Errorf("either panel (legacy) or panels configuration is required")
 	}
 
-	if cfg.Panel.Password == "" {
-		return nil, fmt.Errorf("panel.password is required")
-	}
-
-	if cfg.Panel.LimitIP < 0 {
-		cfg.Panel.LimitIP = 0 // Reset to 0 (unlimited) if negative
+	// Validate each panel
+	for i, panel := range cfg.Panels {
+		if panel.URL == "" {
+			return nil, fmt.Errorf("panels[%d].url is required", i)
+		}
+		if panel.Username == "" {
+			return nil, fmt.Errorf("panels[%d].username is required", i)
+		}
+		if panel.Password == "" {
+			return nil, fmt.Errorf("panels[%d].password is required", i)
+		}
+		if panel.Name == "" {
+			// Auto-generate name if not provided
+			cfg.Panels[i].Name = fmt.Sprintf("Server %d", i+1)
+		}
+		if panel.LimitIP < 0 {
+			cfg.Panels[i].LimitIP = 0 // Reset to 0 (unlimited) if negative
+		}
+		// Set default enabled to true if not specified
+		if i == 0 && panel.Enabled == false && len(cfg.Panels) == 1 {
+			// For single panel, always enable it
+			cfg.Panels[i].Enabled = true
+		}
 	}
 
 	return &cfg, nil

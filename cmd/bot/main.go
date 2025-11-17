@@ -8,8 +8,8 @@ import (
 	"x-ui-bot/internal/bot"
 	"x-ui-bot/internal/config"
 	"x-ui-bot/internal/logger"
+	"x-ui-bot/internal/panel"
 	"x-ui-bot/internal/shutdown"
-	"x-ui-bot/pkg/client"
 	"x-ui-bot/sqlite"
 )
 
@@ -20,8 +20,16 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Create API client
-	apiClient := client.NewAPIClient(cfg.Panel.URL, cfg.Panel.Username, cfg.Panel.Password)
+	// Create panel manager for multi-server support
+	panelManager, err := panel.NewPanelManager(cfg)
+	if err != nil {
+		log.Fatalf("Failed to create panel manager: %v", err)
+	}
+
+	// Login to all panels
+	if err := panelManager.LoginAll(); err != nil {
+		log.Fatalf("Failed to login to panels: %v", err)
+	}
 
 	// Create storage
 	store, err := sqlite.NewSQLiteStorage("./bot.db")
@@ -30,7 +38,7 @@ func main() {
 	}
 
 	// Create and start bot
-	tgBot, err := bot.NewBot(cfg, apiClient, store)
+	tgBot, err := bot.NewBot(cfg, panelManager, store)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}

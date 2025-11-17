@@ -31,6 +31,9 @@ data/
 # Technical specifications
 specs/
 
+# Development planning
+.dev/
+
 # IDE
 .vscode/
 .idea/

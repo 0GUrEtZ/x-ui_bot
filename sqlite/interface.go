@@ -13,6 +13,8 @@ type RegistrationRequest struct {
 	Duration   int
 	Status     string
 	Timestamp  time.Time
+	PanelName  string // Selected panel name
+	InboundID  int    // Selected inbound ID
 }
 
 // AdminMessageState represents state for admin sending message to client

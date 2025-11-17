@@ -6,17 +6,19 @@ import (
 	"time"
 
 	"x-ui-bot/internal/logger"
+	"x-ui-bot/internal/panel"
 	"x-ui-bot/pkg/client"
 	"x-ui-bot/sqlite"
 )
 
 // ForecastService handles traffic forecasting calculations
 type ForecastService struct {
-	apiClient *client.APIClient
-	storage   sqlite.Storage
-	logger    *logger.Logger
-	cache     *forecastCache
-	stopChan  chan struct{}
+	apiClient    *client.APIClient // Keep for backward compatibility
+	panelManager *panel.PanelManager
+	storage      sqlite.Storage
+	logger       *logger.Logger
+	cache        *forecastCache
+	stopChan     chan struct{}
 }
 
 // ForecastData contains calculated forecast information
@@ -45,6 +47,19 @@ func NewForecastService(apiClient *client.APIClient, storage sqlite.Storage, log
 		apiClient: apiClient,
 		storage:   storage,
 		logger:    logger,
+		cache: &forecastCache{
+			timestamp: time.Now().Add(-time.Hour), // Expired cache initially
+		},
+		stopChan: make(chan struct{}),
+	}
+}
+
+// NewForecastServiceWithPanelManager creates a new forecast service with panel manager
+func NewForecastServiceWithPanelManager(panelManager *panel.PanelManager, storage sqlite.Storage, logger *logger.Logger) *ForecastService {
+	return &ForecastService{
+		panelManager: panelManager,
+		storage:      storage,
+		logger:       logger,
 		cache: &forecastCache{
 			timestamp: time.Now().Add(-time.Hour), // Expired cache initially
 		},
@@ -141,65 +156,137 @@ func (fs *ForecastService) ensureTodaySnapshot(today string) error {
 
 // CollectTrafficSnapshot collects current traffic data from 3X-UI API
 func (fs *ForecastService) CollectTrafficSnapshot() error {
-	inbounds, err := fs.apiClient.GetInbounds()
-	if err != nil {
-		return fmt.Errorf("failed to get inbounds from API: %w", err)
-	}
-
 	today := time.Now().Format("2006-01-02")
 	collectedCount := 0
 
-	for _, inbound := range inbounds {
-		if inbound == nil {
-			continue
-		}
+	// If we have panel manager, collect from all panels
+	if fs.panelManager != nil {
+		panels := fs.panelManager.GetHealthyPanels()
+		for _, panel := range panels {
+			client, err := fs.panelManager.GetClient(panel.Name)
+			if err != nil {
+				fs.logger.Errorf("Failed to get client for panel %s: %v", panel.Name, err)
+				continue
+			}
 
-		// Get inbound ID
-		inboundID, ok := inbound["id"].(float64)
-		if !ok {
-			fs.logger.Warn("Inbound missing ID field")
-			continue
-		}
+			inbounds, err := client.GetInbounds()
+			if err != nil {
+				fs.logger.Errorf("Failed to get inbounds for panel %s: %v", panel.Name, err)
+				continue
+			}
 
-		// Get client traffic statistics for this inbound
-		clientStats, err := fs.apiClient.GetClientTrafficsById(int(inboundID))
+			for _, inbound := range inbounds {
+				if inbound == nil {
+					continue
+				}
+
+				// Get inbound ID
+				inboundID, ok := inbound["id"].(float64)
+				if !ok {
+					fs.logger.Warn("Inbound missing ID field")
+					continue
+				}
+
+				// Get client traffic statistics for this inbound
+				clientStats, err := client.GetClientTrafficsById(int(inboundID))
+				if err != nil {
+					fs.logger.Errorf("Failed to get client traffics for inbound %d on panel %s: %v", int(inboundID), panel.Name, err)
+					continue
+				}
+
+				// Process each client's traffic data
+				for _, clientData := range clientStats {
+					email, ok := clientData["email"].(string)
+					if !ok || email == "" {
+						continue
+					}
+
+					// Get traffic stats (up and down are in bytes)
+					var totalBytes uint64
+					if up, ok := clientData["up"].(float64); ok {
+						totalBytes += uint64(up)
+					}
+					if down, ok := clientData["down"].(float64); ok {
+						totalBytes += uint64(down)
+					}
+
+					// Skip if no traffic data
+					if totalBytes == 0 {
+						continue
+					}
+
+					// Save snapshot with panel prefix to avoid conflicts
+					emailWithPanel := fmt.Sprintf("%s:%s", panel.Name, email)
+					if err := fs.storage.SaveTrafficSnapshot(today, emailWithPanel, totalBytes); err != nil {
+						fs.logger.Errorf("Failed to save traffic snapshot for %s on panel %s: %v", email, panel.Name, err)
+						continue
+					}
+
+					collectedCount++
+				}
+			}
+		}
+	} else if fs.apiClient != nil {
+		// Fallback to single panel mode
+		inbounds, err := fs.apiClient.GetInbounds()
 		if err != nil {
-			fs.logger.Errorf("Failed to get client traffics for inbound %d: %v", int(inboundID), err)
-			continue
+			return fmt.Errorf("failed to get inbounds from API: %w", err)
 		}
 
-		// Process each client's traffic data
-		for _, clientData := range clientStats {
-			email, ok := clientData["email"].(string)
-			if !ok || email == "" {
+		for _, inbound := range inbounds {
+			if inbound == nil {
 				continue
 			}
 
-			// Get traffic stats (up and down are in bytes)
-			var totalBytes uint64
-			if up, ok := clientData["up"].(float64); ok {
-				totalBytes += uint64(up)
-			}
-			if down, ok := clientData["down"].(float64); ok {
-				totalBytes += uint64(down)
-			}
-
-			// Skip if no traffic data
-			if totalBytes == 0 {
+			// Get inbound ID
+			inboundID, ok := inbound["id"].(float64)
+			if !ok {
+				fs.logger.Warn("Inbound missing ID field")
 				continue
 			}
 
-			// Save snapshot
-			if err := fs.storage.SaveTrafficSnapshot(today, email, totalBytes); err != nil {
-				fs.logger.Errorf("Failed to save traffic snapshot for %s: %v", email, err)
+			// Get client traffic statistics for this inbound
+			clientStats, err := fs.apiClient.GetClientTrafficsById(int(inboundID))
+			if err != nil {
+				fs.logger.Errorf("Failed to get client traffics for inbound %d: %v", int(inboundID), err)
 				continue
 			}
 
-			collectedCount++
+			// Process each client's traffic data
+			for _, clientData := range clientStats {
+				email, ok := clientData["email"].(string)
+				if !ok || email == "" {
+					continue
+				}
+
+				// Get traffic stats (up and down are in bytes)
+				var totalBytes uint64
+				if up, ok := clientData["up"].(float64); ok {
+					totalBytes += uint64(up)
+				}
+				if down, ok := clientData["down"].(float64); ok {
+					totalBytes += uint64(down)
+				}
+
+				// Skip if no traffic data
+				if totalBytes == 0 {
+					continue
+				}
+
+				// Save snapshot
+				if err := fs.storage.SaveTrafficSnapshot(today, email, totalBytes); err != nil {
+					fs.logger.Errorf("Failed to save traffic snapshot for %s: %v", email, err)
+					continue
+				}
+
+				collectedCount++
+			}
 		}
+	} else {
+		return fmt.Errorf("no API client or panel manager configured")
 	}
 
-	fs.logger.Infof("Traffic snapshot collection completed - snapshots: %d", collectedCount)
+	fs.logger.Infof("Collected traffic snapshots for %d clients", collectedCount)
 	return nil
 }
 

@@ -331,3 +331,99 @@ func (b *Bot) handleRegistrationDecision(requestUserID int64, adminChatID int64,
 		b.logger.Errorf("Failed to delete user state: %v", err)
 	}
 }
+
+// handleRegistrationPanelSelection handles the final step of registration - creating client on selected panel/inbound
+func (b *Bot) handleRegistrationPanelSelection(requestUserID int64, adminChatID int64, messageID int, panelName string, inboundID int) {
+	req, exists := b.getRegistrationRequest(requestUserID)
+	if !exists {
+		b.sendMessage(adminChatID, "❌ Заявка не найдена")
+		return
+	}
+
+	// Update request with selected panel and inbound
+	req.PanelName = panelName
+	req.InboundID = inboundID
+	req.Status = "approved"
+
+	if err := b.setRegistrationRequest(requestUserID, req); err != nil {
+		b.sendMessage(adminChatID, fmt.Sprintf("❌ Ошибка сохранения заявки: %v", err))
+		b.logger.Errorf("Failed to update registration request: %v", err)
+		return
+	}
+
+	// Create client via API
+	err := b.createClientForRequest(req)
+	if err != nil {
+		b.sendMessage(adminChatID, fmt.Sprintf("❌ Ошибка при создании клиента: %v", err))
+		b.logger.Errorf("Failed to create client for request: %v", err)
+		return
+	}
+
+	// Get subscription link
+	subLink, err := b.apiClient.GetClientLink(req.Email)
+	if err != nil {
+		b.logger.Warnf("Failed to get subscription link: %v", err)
+		subLink = "Не удалось получить ссылку. Обратитесь к администратору."
+	}
+
+	// Notify user with subscription link
+	instructionsText := b.getInstructionsText()
+
+	limitDevicesText := ""
+	if b.config.Panel.LimitIP > 0 {
+		limitDevicesText = fmt.Sprintf("\n📱 Лимит устройств: %d", b.config.Panel.LimitIP)
+	}
+
+	userMsg := fmt.Sprintf(
+		"✅ <b>Ваша заявка одобрена!</b>\n\n"+
+			"👤 Аккаунт: %s\n"+
+			"📅 Срок: %d дней%s\n\n"+
+			"🔗 <b>Ваша VPN конфигурация:</b>\n"+
+			"<blockquote expandable>%s</blockquote>\n\n"+
+			"Скопируйте эту ссылку и добавьте её в ваше VPN приложение.%s",
+		html.EscapeString(req.Email),
+		req.Duration,
+		limitDevicesText,
+		html.EscapeString(subLink),
+		instructionsText,
+	)
+	b.sendMessage(req.UserID, userMsg)
+
+	// Show main menu to the user after successful registration
+	time.Sleep(1 * time.Second) // Small delay for better UX
+	b.handleStart(req.UserID, req.Username, false)
+
+	// Update admin message
+	tgUsernameStr := ""
+	if req.TgUsername != "" {
+		tgUsernameStr = fmt.Sprintf(" (@%s)", req.TgUsername)
+	}
+
+	adminMsg := fmt.Sprintf(
+		"✅ <b>Заявка ОДОБРЕНА</b>\n\n"+
+			"👤 Пользователь: %s%s\n"+
+			"👤 Username: %s\n"+
+			"🏠 Панель: %s\n"+
+			"📡 Inbound ID: %d\n"+
+			"📅 Срок: %d дней",
+		html.EscapeString(req.Username),
+		tgUsernameStr,
+		html.EscapeString(req.Email),
+		html.EscapeString(panelName),
+		inboundID,
+		req.Duration,
+	)
+	b.editMessageText(adminChatID, messageID, adminMsg)
+
+	b.logger.Infof("Registration approved for user %d, email: %s, panel: %s, inbound: %d", requestUserID, req.Email, panelName, inboundID)
+
+	// Clean up old requests and states
+	if err := b.deleteRegistrationRequest(requestUserID); err != nil {
+		b.logger.Errorf("Failed to delete registration request: %v", err)
+	}
+
+	// Clear FSM state for user
+	if err := b.deleteUserState(req.UserID); err != nil {
+		b.logger.Errorf("Failed to delete user state: %v", err)
+	}
+}

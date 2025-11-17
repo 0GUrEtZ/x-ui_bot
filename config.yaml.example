@@ -6,6 +6,7 @@ telegram:
   api_server: ""
   welcome_file: "https://example.com/welcome.pdf"  # URL to welcome PDF file
 
+# Single panel configuration (legacy, for backward compatibility)
 panel:
   url: "https://your-panel-url.com"
   username: "admin"
@@ -13,6 +14,23 @@ panel:
   limit_ip: 5  # Limit of simultaneous IP connections per user (0 = unlimited)
   traffic_limit_gb: 100  # Traffic limit per user in GB (0 = unlimited)
   backup_days: 7  # Backup database every N days to admins (0 = disabled)
+
+# Multi-panel configuration (recommended for multiple servers)
+panels:
+  - name: "Main Server"  # Display name for the panel
+    url: "https://your-panel-url.com"
+    username: "admin"
+    password: "your_password"
+    enabled: true  # Set to false to temporarily disable this panel
+    limit_ip: 5  # Limit of simultaneous IP connections per user (0 = unlimited)
+    traffic_limit_gb: 100  # Traffic limit per user in GB (0 = unlimited)
+  - name: "Backup Server"
+    url: "https://backup-panel-url.com"
+    username: "admin"
+    password: "backup_password"
+    enabled: true
+    limit_ip: 3
+    traffic_limit_gb: 50
 
 payment:
   bank: "Сбербанк"

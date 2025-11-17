@@ -3,6 +3,7 @@ package sqlite
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -83,7 +84,22 @@ func (s *SQLiteStorage) initialize() error {
 	`
 
 	_, err := s.db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migration: Add panel_name and inbound_id columns to registration_requests
+	migration := `
+	ALTER TABLE registration_requests ADD COLUMN panel_name TEXT;
+	ALTER TABLE registration_requests ADD COLUMN inbound_id INTEGER;
+	`
+	_, err = s.db.Exec(migration)
+	// Ignore error if columns already exist
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return err
+	}
+
+	return nil
 }
 
 // User states
@@ -117,9 +133,9 @@ func (s *SQLiteStorage) DeleteUserState(userID int64) error {
 func (s *SQLiteStorage) SetRegistrationRequest(userID int64, req *RegistrationRequest) error {
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO registration_requests 
-		(user_id, username, tg_username, email, duration, status, timestamp)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		userID, req.Username, req.TgUsername, req.Email, req.Duration, req.Status, req.Timestamp,
+		(user_id, username, tg_username, email, duration, status, timestamp, panel_name, inbound_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		userID, req.Username, req.TgUsername, req.Email, req.Duration, req.Status, req.Timestamp, req.PanelName, req.InboundID,
 	)
 	return err
 }
@@ -127,10 +143,10 @@ func (s *SQLiteStorage) SetRegistrationRequest(userID int64, req *RegistrationRe
 func (s *SQLiteStorage) GetRegistrationRequest(userID int64) (*RegistrationRequest, error) {
 	req := &RegistrationRequest{}
 	err := s.db.QueryRow(`
-		SELECT user_id, username, tg_username, email, duration, status, timestamp
+		SELECT user_id, username, tg_username, email, duration, status, timestamp, panel_name, inbound_id
 		FROM registration_requests WHERE user_id = ?`,
 		userID,
-	).Scan(&req.UserID, &req.Username, &req.TgUsername, &req.Email, &req.Duration, &req.Status, &req.Timestamp)
+	).Scan(&req.UserID, &req.Username, &req.TgUsername, &req.Email, &req.Duration, &req.Status, &req.Timestamp, &req.PanelName, &req.InboundID)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("registration request not found for user %d", userID)

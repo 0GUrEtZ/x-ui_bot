@@ -182,30 +182,63 @@ func (b *Bot) handleStatus(chatID int64, isAdmin bool) {
 		return
 	}
 
-	status, err := b.apiClient.GetStatus()
-	if err != nil {
-		b.sendMessage(chatID, fmt.Sprintf("❌ Failed to get status: %v", err))
+	panels := b.panelManager.GetPanels()
+	if len(panels) == 0 {
+		b.sendMessage(chatID, "❌ No panels configured")
 		return
 	}
 
-	// Format status message
 	msg := "📊 Server Status:\n\n"
-	if obj, ok := status["obj"].(map[string]interface{}); ok {
-		if cpu, ok := obj["cpu"].(float64); ok {
-			msg += fmt.Sprintf("💻 CPU: %.2f%%\n", cpu)
+
+	for _, panel := range panels {
+		msg += fmt.Sprintf("🏠 <b>%s</b> (%s)\n", panel.Name, panel.URL)
+
+		// Show connection status
+		if panel.IsHealthy {
+			msg += "🟢 Connected\n"
+		} else {
+			msg += "🔴 Disconnected\n"
+			if panel.Error != "" {
+				msg += fmt.Sprintf("   Error: %s\n", panel.Error)
+			}
 		}
-		if mem, ok := obj["mem"].(map[string]interface{}); ok {
-			if current, ok := mem["current"].(float64); ok {
-				if total, ok := mem["total"].(float64); ok {
-					msg += fmt.Sprintf("🧠 Memory: %.2f / %.2f GB\n", current/1024/1024/1024, total/1024/1024/1024)
+
+		// Get detailed status if healthy
+		if panel.IsHealthy {
+			client, err := b.panelManager.GetClient(panel.Name)
+			if err == nil {
+				status, err := client.GetStatus()
+				if err == nil {
+					if obj, ok := status["obj"].(map[string]interface{}); ok {
+						if cpu, ok := obj["cpu"].(float64); ok {
+							msg += fmt.Sprintf("   💻 CPU: %.1f%%\n", cpu)
+						}
+						if mem, ok := obj["mem"].(map[string]interface{}); ok {
+							if current, ok := mem["current"].(float64); ok {
+								if total, ok := mem["total"].(float64); ok {
+									msg += fmt.Sprintf("   🧠 Memory: %.1f / %.1f GB\n",
+										current/1024/1024/1024, total/1024/1024/1024)
+								}
+							}
+						}
+						if uptime, ok := obj["uptime"].(float64); ok {
+							hours := int(uptime / 3600)
+							minutes := int((uptime - float64(hours*3600)) / 60)
+							msg += fmt.Sprintf("   ⏱️ Uptime: %dh %dm\n", hours, minutes)
+						}
+					}
+				} else {
+					msg += fmt.Sprintf("   ⚠️ Status error: %v\n", err)
 				}
 			}
 		}
-		if uptime, ok := obj["uptime"].(float64); ok {
-			hours := int(uptime / 3600)
-			minutes := int((uptime - float64(hours*3600)) / 60)
-			msg += fmt.Sprintf("⏱️ Uptime: %dh %dm\n", hours, minutes)
+
+		// Show last health check time
+		if !panel.LastHealthCheck.IsZero() {
+			msg += fmt.Sprintf("   🔍 Last check: %s\n", panel.LastHealthCheck.Format("15:04:05"))
 		}
+
+		msg += "\n"
 	}
 
 	b.sendMessage(chatID, msg)
@@ -228,87 +261,114 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 	b.logger.Infof("Clients list requested by user ID: %d", chatID)
 
 	if len(messageID) == 0 {
-		b.sendMessage(chatID, "⏳ Загружаю список инбаундов...")
+		b.sendMessage(chatID, "⏳ Загружаю список панелей и инбаундов...")
 	}
 
-	inbounds, err := b.apiClient.GetInbounds()
-	if err != nil {
-		b.logger.Errorf("Failed to get inbounds: %v", err)
-		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка получения списка: %v", err))
+	panels := b.panelManager.GetHealthyPanels()
+	if len(panels) == 0 {
+		b.sendMessage(chatID, "❌ Нет доступных панелей")
 		return
 	}
 
-	if len(inbounds) == 0 {
-		b.sendMessage(chatID, "📭 Нет доступных inbound'ов")
-		return
-	}
-
-	// Build inline keyboard with inbounds
+	// Build inline keyboard with panels and their inbounds
 	var buttons [][]telego.InlineKeyboardButton
 
-	for _, inbound := range inbounds {
-		// Get inbound ID
-		inboundID := 0
-		if id, ok := inbound["id"].(float64); ok {
-			inboundID = int(id)
+	for _, panel := range panels {
+		// Add panel header
+		panelHeader := fmt.Sprintf("🏠 <b>%s</b> (%s)", panel.Name, panel.URL)
+		if !panel.IsHealthy {
+			panelHeader += " 🔴"
+		} else {
+			panelHeader += " 🟢"
+		}
+		headerButton := tu.InlineKeyboardButton(panelHeader).WithCallbackData("panel_header")
+		buttons = append(buttons, []telego.InlineKeyboardButton{headerButton})
+
+		// Get client for this panel
+		client, err := b.panelManager.GetClient(panel.Name)
+		if err != nil {
+			b.logger.Errorf("Failed to get client for panel %s: %v", panel.Name, err)
+			continue
 		}
 
-		// Get inbound remark (name)
-		remark := "Unnamed"
-		if r, ok := inbound["remark"].(string); ok && r != "" {
-			remark = r
+		// Get inbounds for this panel
+		inbounds, err := client.GetInbounds()
+		if err != nil {
+			b.logger.Errorf("Failed to get inbounds for panel %s: %v", panel.Name, err)
+			continue
 		}
 
-		// Get protocol
-		protocol := ""
-		if p, ok := inbound["protocol"].(string); ok {
-			protocol = strings.ToUpper(p)
+		if len(inbounds) == 0 {
+			noInboundButton := tu.InlineKeyboardButton("   📭 Нет инбаундов").WithCallbackData("no_inbounds")
+			buttons = append(buttons, []telego.InlineKeyboardButton{noInboundButton})
+			continue
 		}
 
-		// Get port
-		port := ""
-		if p, ok := inbound["port"].(float64); ok {
-			port = fmt.Sprintf(":%d", int(p))
+		// Add inbound buttons for this panel
+		for _, inbound := range inbounds {
+			// Get inbound ID
+			inboundID := 0
+			if id, ok := inbound["id"].(float64); ok {
+				inboundID = int(id)
+			}
+
+			// Get inbound remark (name)
+			remark := "Unnamed"
+			if r, ok := inbound["remark"].(string); ok && r != "" {
+				remark = r
+			}
+
+			// Get protocol
+			protocol := ""
+			if p, ok := inbound["protocol"].(string); ok {
+				protocol = strings.ToUpper(p)
+			}
+
+			// Get port
+			port := ""
+			if p, ok := inbound["port"].(float64); ok {
+				port = fmt.Sprintf(":%d", int(p))
+			}
+
+			// Count clients
+			settingsStr := ""
+			if s, ok := inbound["settings"].(string); ok {
+				settingsStr = s
+			}
+
+			clientCount := 0
+			clients, err := b.clientService.ParseClients(settingsStr)
+			if err == nil {
+				clientCount = len(clients)
+			}
+
+			// Inbound status
+			enable := true
+			if e, ok := inbound["enable"].(bool); ok {
+				enable = e
+			}
+
+			statusEmoji := "🟢"
+			if !enable {
+				statusEmoji = "🔴"
+			}
+
+			// Button text: status + protocol + remark + port + client count
+			buttonText := fmt.Sprintf("   %s %s %s%s (%d клиентов)", statusEmoji, protocol, remark, port, clientCount)
+			inboundButton := tu.InlineKeyboardButton(buttonText).
+				WithCallbackData(fmt.Sprintf("inbound_%s_%d", panel.Name, inboundID))
+
+			buttons = append(buttons, []telego.InlineKeyboardButton{inboundButton})
 		}
-
-		// Count clients
-		settingsStr := ""
-		if s, ok := inbound["settings"].(string); ok {
-			settingsStr = s
-		}
-
-		clientCount := 0
-		clients, err := b.clientService.ParseClients(settingsStr)
-		if err == nil {
-			clientCount = len(clients)
-		}
-
-		// Inbound status
-		enable := true
-		if e, ok := inbound["enable"].(bool); ok {
-			enable = e
-		}
-
-		statusEmoji := "🟢"
-		if !enable {
-			statusEmoji = "🔴"
-		}
-
-		// Button text: status + protocol + remark + port + client count
-		buttonText := fmt.Sprintf("%s %s %s%s (%d клиентов)", statusEmoji, protocol, remark, port, clientCount)
-		inboundButton := tu.InlineKeyboardButton(buttonText).
-			WithCallbackData(fmt.Sprintf("inbound_%d", inboundID))
-
-		buttons = append(buttons, []telego.InlineKeyboardButton{inboundButton})
 	}
 
 	if len(buttons) == 0 {
-		b.sendMessage(chatID, "📭 Нет инбаундов для отображения")
+		b.sendMessage(chatID, "📭 Нет панелей и инбаундов для отображения")
 		return
 	}
 
 	keyboard := &telego.InlineKeyboardMarkup{InlineKeyboard: buttons}
-	msg := "📋 <b>Список инбаундов</b>\n\nВыберите инбаунд для просмотра клиентов:"
+	msg := "📋 <b>Список панелей и инбаундов</b>\n\nВыберите инбаунд для просмотра клиентов:"
 
 	if len(messageID) > 0 {
 		b.editMessage(chatID, messageID[0], msg, keyboard)
@@ -316,14 +376,22 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 		b.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
 	}
 
-	b.logger.Infof("Sent %d inbounds to user ID: %d", len(inbounds), chatID)
+	b.logger.Infof("Sent %d panels with inbounds to user ID: %d", len(panels), chatID)
 }
 
 // handleInboundClients shows clients list for specific inbound
-func (b *Bot) handleInboundClients(chatID int64, inboundID int, messageID int) {
-	b.logger.Infof("Inbound %d clients requested by user ID: %d", inboundID, chatID)
+func (b *Bot) handleInboundClients(chatID int64, panelName string, inboundID int, messageID int) {
+	b.logger.Infof("Inbound %d clients requested for panel %s by user ID: %d", inboundID, panelName, chatID)
 
-	inbound, err := b.apiClient.GetInbound(inboundID)
+	// Get client for the panel
+	client, err := b.panelManager.GetClient(panelName)
+	if err != nil {
+		b.logger.Errorf("Failed to get client for panel %s: %v", panelName, err)
+		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка получения клиента панели: %v", err))
+		return
+	}
+
+	inbound, err := client.GetInbound(inboundID)
 	if err != nil {
 		b.logger.Errorf("Failed to get inbound: %v", err)
 		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка получения инбаунда: %v", err))
@@ -347,6 +415,7 @@ func (b *Bot) handleInboundClients(chatID int64, inboundID int, messageID int) {
 		b.logger.WithFields(map[string]interface{}{
 			"error":      err,
 			"inbound_id": inboundID,
+			"panel":      panelName,
 		}).Error("Failed to parse clients")
 		b.sendMessage(chatID, "❌ Ошибка парсинга клиентов")
 		return
@@ -447,12 +516,13 @@ func (b *Bot) handleInboundClients(chatID int64, inboundID int, messageID int) {
 		}
 
 		// Store client info for callback handling
-		b.clientCache.Store(fmt.Sprintf("%d_%d", inboundID, i), client)
+		cacheKey := fmt.Sprintf("%s_%d_%d", panelName, inboundID, i)
+		b.clientCache.Store(cacheKey, client)
 
 		// Button text: status + email + username + traffic
 		buttonText := fmt.Sprintf("%s %s%s%s", statusEmoji, email, tgUsernameStr, trafficStr)
 		clientButton := tu.InlineKeyboardButton(buttonText).
-			WithCallbackData(fmt.Sprintf("client_%d_%d", inboundID, i))
+			WithCallbackData(fmt.Sprintf("client_%s_%d_%d", panelName, inboundID, i))
 
 		buttons = append(buttons, []telego.InlineKeyboardButton{clientButton})
 	}

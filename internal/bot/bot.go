@@ -10,6 +10,7 @@ import (
 	"x-ui-bot/internal/bot/services"
 	"x-ui-bot/internal/config"
 	"x-ui-bot/internal/logger"
+	"x-ui-bot/internal/panel"
 	"x-ui-bot/pkg/client"
 	"x-ui-bot/sqlite"
 
@@ -38,7 +39,7 @@ type BroadcastState = sqlite.BroadcastState
 // Bot represents the Telegram bot
 type Bot struct {
 	config    *config.Config
-	apiClient *client.APIClient
+	apiClient *client.APIClient // Keep for backward compatibility, but will be removed
 	bot       *telego.Bot
 	handler   *th.BotHandler
 	cancel    context.CancelFunc
@@ -46,6 +47,9 @@ type Bot struct {
 	isRunning bool
 	storage   Storage // Storage interface for persistence
 	logger    *logger.Logger
+
+	// Panel manager for multi-server support
+	panelManager *panel.PanelManager
 
 	// Services
 	clientService       *services.ClientService
@@ -66,7 +70,7 @@ type Bot struct {
 type Storage = sqlite.Storage
 
 // NewBot creates a new Bot instance
-func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bot, error) {
+func NewBot(cfg *config.Config, panelManager *panel.PanelManager, store Storage) (*Bot, error) {
 	bot, err := createTelegoBot(cfg.Telegram.Token, cfg.Telegram.Proxy, cfg.Telegram.APIServer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create telegram bot: %w", err)
@@ -76,12 +80,19 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bo
 	logger.Init("info", false) // false = JSON format
 	log := logger.GetLogger()
 
+	// Get first panel client for backward compatibility
+	firstPanel := panelManager.GetPanels()[0]
+	firstClient, err := panelManager.GetClient(firstPanel.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get first panel client: %w", err)
+	}
+
 	// Initialize services
-	clientService := services.NewClientService(apiClient, log)
+	clientService := services.NewClientService(firstClient, log)
 	subscriptionService := services.NewSubscriptionService(log)
-	backupService := services.NewBackupService(apiClient, bot, cfg, log)
-	broadcastService := services.NewBroadcastService(apiClient, bot, log)
-	forecastService := services.NewForecastService(apiClient, store, log)
+	backupService := services.NewBackupServiceWithPanelManager(panelManager, bot, cfg, log)
+	broadcastService := services.NewBroadcastServiceWithPanelManager(panelManager, bot, log)
+	forecastService := services.NewForecastServiceWithPanelManager(panelManager, store, log)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg)
@@ -89,10 +100,11 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bo
 
 	return &Bot{
 		config:              cfg,
-		apiClient:           apiClient,
+		apiClient:           firstClient, // Keep for backward compatibility
 		bot:                 bot,
 		storage:             store,
 		logger:              log,
+		panelManager:        panelManager,
 		clientService:       clientService,
 		subscriptionService: subscriptionService,
 		backupService:       backupService,
@@ -243,23 +255,34 @@ func (b *Bot) cleanupExpiredStates(ctx context.Context) {
 
 // createClientForRequest creates a new client based on registration request
 func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
-	// Get first inbound to add client to
-	inbounds, err := b.apiClient.GetInbounds()
+	// Use selected panel and inbound
+	client, err := b.panelManager.GetClient(req.PanelName)
+	if err != nil {
+		return fmt.Errorf("failed to get client for panel %s: %w", req.PanelName, err)
+	}
+
+	// Get the selected inbound
+	inbounds, err := client.GetInbounds()
 	if err != nil {
 		return fmt.Errorf("failed to get inbounds: %w", err)
 	}
 
-	if len(inbounds) == 0 {
-		return fmt.Errorf("no inbounds available")
+	var selectedInbound map[string]interface{}
+	for _, inbound := range inbounds {
+		if inboundID, ok := inbound["id"].(float64); ok && int(inboundID) == req.InboundID {
+			selectedInbound = inbound
+			break
+		}
 	}
 
-	// Use first inbound
-	firstInbound := inbounds[0]
-	inboundID := int(firstInbound["id"].(float64))
+	if selectedInbound == nil {
+		return fmt.Errorf("selected inbound %d not found on panel %s", req.InboundID, req.PanelName)
+	}
+	inboundID := int(selectedInbound["id"].(float64))
 
 	// Get protocol
 	protocol := ""
-	if p, ok := firstInbound["protocol"].(string); ok {
+	if p, ok := selectedInbound["protocol"].(string); ok {
 		protocol = p
 	}
 
@@ -289,10 +312,10 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 	}
 
 	// Add protocol-specific fields
-	b.addProtocolFields(clientData, protocol, firstInbound)
+	b.addProtocolFields(clientData, protocol, selectedInbound)
 
 	// Add client via API
-	return b.apiClient.AddClient(inboundID, clientData)
+	return client.AddClient(inboundID, clientData)
 }
 
 // backupScheduler periodically sends database backups to admins
