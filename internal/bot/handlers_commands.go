@@ -5,6 +5,7 @@ import (
 	"html"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mymmrac/telego"
@@ -217,7 +218,7 @@ func (b *Bot) handleID(chatID, userID int64) {
 	b.sendMessage(chatID, msg)
 }
 
-// handleClients handles the /clients command - shows all clients with traffic stats
+// handleClients handles the /clients command - shows list of inbounds
 func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 	if !isAdmin {
 		b.sendMessage(chatID, "⛔ У вас нет прав для использования этой команды")
@@ -227,7 +228,7 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 	b.logger.Infof("Clients list requested by user ID: %d", chatID)
 
 	if len(messageID) == 0 {
-		b.sendMessage(chatID, "⏳ Загружаю список клиентов...")
+		b.sendMessage(chatID, "⏳ Загружаю список инбаундов...")
 	}
 
 	inbounds, err := b.apiClient.GetInbounds()
@@ -242,9 +243,8 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 		return
 	}
 
-	// Build inline keyboard with all clients
+	// Build inline keyboard with inbounds
 	var buttons [][]telego.InlineKeyboardButton
-	totalClients := 0
 
 	for _, inbound := range inbounds {
 		// Get inbound ID
@@ -253,124 +253,62 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 			inboundID = int(id)
 		}
 
-		// Parse settings to get client configurations
+		// Get inbound remark (name)
+		remark := "Unnamed"
+		if r, ok := inbound["remark"].(string); ok && r != "" {
+			remark = r
+		}
+
+		// Get protocol
+		protocol := ""
+		if p, ok := inbound["protocol"].(string); ok {
+			protocol = strings.ToUpper(p)
+		}
+
+		// Get port
+		port := ""
+		if p, ok := inbound["port"].(float64); ok {
+			port = fmt.Sprintf(":%d", int(p))
+		}
+
+		// Count clients
 		settingsStr := ""
 		if s, ok := inbound["settings"].(string); ok {
 			settingsStr = s
 		}
 
+		clientCount := 0
 		clients, err := b.clientService.ParseClients(settingsStr)
-		if err != nil {
-			b.logger.WithFields(map[string]interface{}{
-				"error":      err,
-				"inbound_id": inboundID,
-			}).Error("Failed to parse clients")
-			continue
-		}
-		if len(clients) == 0 {
-			continue
+		if err == nil {
+			clientCount = len(clients)
 		}
 
-		// Create button for each client
-		for i, client := range clients {
-			totalClients++
-			email := client["email"]
-			enable := client["enable"]
-			totalGB := client["totalGB"]
-			expiryTime := client["expiryTime"]
-
-			// Check if subscription expired
-			isExpired := false
-			isUnlimited := false
-			if expiryTime != "" && expiryTime != "0" {
-				timestamp, err := strconv.ParseInt(expiryTime, 10, 64)
-				if err == nil && timestamp > 0 {
-					now := time.Now().UnixMilli()
-					if timestamp < now {
-						isExpired = true
-					}
-				}
-			} else {
-				isUnlimited = true
-			}
-
-			// Status emoji with subscription status
-			var statusEmoji string
-			if isExpired {
-				statusEmoji = "⛔" // Expired subscription
-			} else if enable == "false" {
-				statusEmoji = "🔴" // Blocked
-			} else if isUnlimited {
-				statusEmoji = "💎" // Unlimited subscription
-			} else {
-				statusEmoji = "🟢" // Active
-			}
-
-			// Get traffic info
-			trafficStr := ""
-			traffic, err := b.apiClient.GetClientTraffics(email)
-			if err == nil && traffic != nil {
-				var up, down, total int64
-				if u, ok := traffic["up"].(float64); ok {
-					up = int64(u)
-				}
-				if d, ok := traffic["down"].(float64); ok {
-					down = int64(d)
-				}
-				total = up + down
-
-				// Show traffic with limit or unlimited
-				if totalGB != "" && totalGB != "0" {
-					// totalGB is already in bytes
-					limitBytes, _ := strconv.ParseFloat(totalGB, 64)
-					limitGB := limitBytes / (1024 * 1024 * 1024)
-
-					usedGB := float64(total) / (1024 * 1024 * 1024)
-
-					// Calculate percentage and round up
-					percentage := 0
-					if limitBytes > 0 {
-						percentage = int(math.Ceil((float64(total) / limitBytes) * 100))
-					}
-
-					trafficStr = fmt.Sprintf(" %.1fGB/%.0fGB (%d%%)", usedGB, limitGB, percentage)
-				} else {
-					// Unlimited traffic
-					trafficStr = " ∞"
-				}
-			}
-
-			// Get Telegram username if exists
-			tgUsernameStr := ""
-			if tgId, ok := client["tgId"]; ok && tgId != "" && tgId != "0" {
-				tgIDInt, err := strconv.ParseInt(tgId, 10, 64)
-				if err == nil && tgIDInt > 0 {
-					_, username := b.getUserInfo(tgIDInt)
-					if username != "" {
-						tgUsernameStr = fmt.Sprintf(" %s", username)
-					}
-				}
-			}
-
-			// Store client info for callback handling
-			b.clientCache.Store(fmt.Sprintf("%d_%d", inboundID, i), client)
-
-			// Button text: status + email + username + traffic
-			buttonText := fmt.Sprintf("%s %s%s%s", statusEmoji, email, tgUsernameStr, trafficStr)
-			clientButton := tu.InlineKeyboardButton(buttonText).
-				WithCallbackData(fmt.Sprintf("client_%d_%d", inboundID, i))
-
-			buttons = append(buttons, []telego.InlineKeyboardButton{clientButton})
+		// Inbound status
+		enable := true
+		if e, ok := inbound["enable"].(bool); ok {
+			enable = e
 		}
+
+		statusEmoji := "🟢"
+		if !enable {
+			statusEmoji = "🔴"
+		}
+
+		// Button text: status + protocol + remark + port + client count
+		buttonText := fmt.Sprintf("%s %s %s%s (%d клиентов)", statusEmoji, protocol, remark, port, clientCount)
+		inboundButton := tu.InlineKeyboardButton(buttonText).
+			WithCallbackData(fmt.Sprintf("inbound_%d", inboundID))
+
+		buttons = append(buttons, []telego.InlineKeyboardButton{inboundButton})
 	}
 
 	if len(buttons) == 0 {
-		b.sendMessage(chatID, "📭 Нет клиентов для отображения")
+		b.sendMessage(chatID, "📭 Нет инбаундов для отображения")
 		return
 	}
 
 	keyboard := &telego.InlineKeyboardMarkup{InlineKeyboard: buttons}
-	msg := "📋 <b>Список клиентов</b>\n\nВыберите клиента для управления:"
+	msg := "📋 <b>Список инбаундов</b>\n\nВыберите инбаунд для просмотра клиентов:"
 
 	if len(messageID) > 0 {
 		b.editMessage(chatID, messageID[0], msg, keyboard)
@@ -378,5 +316,155 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 		b.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
 	}
 
-	b.logger.Infof("Sent %d clients to user ID: %d", totalClients, chatID)
+	b.logger.Infof("Sent %d inbounds to user ID: %d", len(inbounds), chatID)
+}
+
+// handleInboundClients shows clients list for specific inbound
+func (b *Bot) handleInboundClients(chatID int64, inboundID int, messageID int) {
+	b.logger.Infof("Inbound %d clients requested by user ID: %d", inboundID, chatID)
+
+	inbound, err := b.apiClient.GetInbound(inboundID)
+	if err != nil {
+		b.logger.Errorf("Failed to get inbound: %v", err)
+		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка получения инбаунда: %v", err))
+		return
+	}
+
+	// Get inbound name
+	remark := "Unnamed"
+	if r, ok := inbound["remark"].(string); ok && r != "" {
+		remark = r
+	}
+
+	// Parse settings to get client configurations
+	settingsStr := ""
+	if s, ok := inbound["settings"].(string); ok {
+		settingsStr = s
+	}
+
+	clients, err := b.clientService.ParseClients(settingsStr)
+	if err != nil {
+		b.logger.WithFields(map[string]interface{}{
+			"error":      err,
+			"inbound_id": inboundID,
+		}).Error("Failed to parse clients")
+		b.sendMessage(chatID, "❌ Ошибка парсинга клиентов")
+		return
+	}
+
+	if len(clients) == 0 {
+		// Back button
+		backButton := tu.InlineKeyboardButton("🔙 Назад").
+			WithCallbackData("clients_back")
+		keyboard := &telego.InlineKeyboardMarkup{
+			InlineKeyboard: [][]telego.InlineKeyboardButton{{backButton}},
+		}
+		msg := fmt.Sprintf("📭 В инбаунде <b>%s</b> нет клиентов", html.EscapeString(remark))
+		b.editMessage(chatID, messageID, msg, keyboard)
+		return
+	}
+
+	// Build inline keyboard with clients
+	var buttons [][]telego.InlineKeyboardButton
+
+	for i, client := range clients {
+		email := client["email"]
+		enable := client["enable"]
+		totalGB := client["totalGB"]
+		expiryTime := client["expiryTime"]
+
+		// Check if subscription expired
+		isExpired := false
+		isUnlimited := false
+		if expiryTime != "" && expiryTime != "0" {
+			timestamp, err := strconv.ParseInt(expiryTime, 10, 64)
+			if err == nil && timestamp > 0 {
+				now := time.Now().UnixMilli()
+				if timestamp < now {
+					isExpired = true
+				}
+			}
+		} else {
+			isUnlimited = true
+		}
+
+		// Status emoji with subscription status
+		var statusEmoji string
+		if isExpired {
+			statusEmoji = "⛔" // Expired subscription
+		} else if enable == "false" {
+			statusEmoji = "🔴" // Blocked
+		} else if isUnlimited {
+			statusEmoji = "💎" // Unlimited subscription
+		} else {
+			statusEmoji = "🟢" // Active
+		}
+
+		// Get traffic info
+		trafficStr := ""
+		traffic, err := b.apiClient.GetClientTraffics(email)
+		if err == nil && traffic != nil {
+			var up, down, total int64
+			if u, ok := traffic["up"].(float64); ok {
+				up = int64(u)
+			}
+			if d, ok := traffic["down"].(float64); ok {
+				down = int64(d)
+			}
+			total = up + down
+
+			// Show traffic with limit or unlimited
+			if totalGB != "" && totalGB != "0" {
+				// totalGB is already in bytes
+				limitBytes, _ := strconv.ParseFloat(totalGB, 64)
+				limitGB := limitBytes / (1024 * 1024 * 1024)
+
+				usedGB := float64(total) / (1024 * 1024 * 1024)
+
+				// Calculate percentage and round up
+				percentage := 0
+				if limitBytes > 0 {
+					percentage = int(math.Ceil((float64(total) / limitBytes) * 100))
+				}
+
+				trafficStr = fmt.Sprintf(" %.1fGB/%.0fGB (%d%%)", usedGB, limitGB, percentage)
+			} else {
+				// Unlimited traffic
+				trafficStr = " ∞"
+			}
+		}
+
+		// Get Telegram username if exists
+		tgUsernameStr := ""
+		if tgId, ok := client["tgId"]; ok && tgId != "" && tgId != "0" {
+			tgIDInt, err := strconv.ParseInt(tgId, 10, 64)
+			if err == nil && tgIDInt > 0 {
+				_, username := b.getUserInfo(tgIDInt)
+				if username != "" {
+					tgUsernameStr = fmt.Sprintf(" %s", username)
+				}
+			}
+		}
+
+		// Store client info for callback handling
+		b.clientCache.Store(fmt.Sprintf("%d_%d", inboundID, i), client)
+
+		// Button text: status + email + username + traffic
+		buttonText := fmt.Sprintf("%s %s%s%s", statusEmoji, email, tgUsernameStr, trafficStr)
+		clientButton := tu.InlineKeyboardButton(buttonText).
+			WithCallbackData(fmt.Sprintf("client_%d_%d", inboundID, i))
+
+		buttons = append(buttons, []telego.InlineKeyboardButton{clientButton})
+	}
+
+	// Add back button
+	backButton := tu.InlineKeyboardButton("� Назад к инбаундам").
+		WithCallbackData("clients_back")
+	buttons = append(buttons, []telego.InlineKeyboardButton{backButton})
+
+	keyboard := &telego.InlineKeyboardMarkup{InlineKeyboard: buttons}
+	msg := fmt.Sprintf("📋 <b>Клиенты в инбаунде: %s</b>\n\nВыберите клиента для управления:", html.EscapeString(remark))
+
+	b.editMessage(chatID, messageID, msg, keyboard)
+	b.logger.Infof("Sent %d clients from inbound %d to user ID: %d", len(clients), inboundID, chatID)
 }

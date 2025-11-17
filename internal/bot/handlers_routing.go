@@ -360,6 +360,34 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		}
 	}
 
+	// Handle inbound_X buttons (show clients in inbound)
+	if strings.HasPrefix(data, "inbound_") {
+		parts := strings.Split(data, "_")
+		if len(parts) == 2 {
+			inboundID, err := strconv.Atoi(parts[1])
+			if err == nil {
+				if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+					CallbackQueryID: query.ID,
+				}); err != nil {
+					b.logger.Errorf("Failed to answer inbound callback: %v", err)
+				}
+				b.handleInboundClients(chatID, inboundID, messageID)
+				return nil
+			}
+		}
+	}
+
+	// Handle clients_back button (back to inbounds list)
+	if data == "clients_back" {
+		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+		}); err != nil {
+			b.logger.Errorf("Failed to answer clients back callback: %v", err)
+		}
+		b.handleClients(chatID, true, messageID)
+		return nil
+	}
+
 	// Handle client_X_Y buttons (show client actions menu)
 	if strings.HasPrefix(data, "client_") {
 		parts := strings.Split(data, "_")
@@ -374,7 +402,24 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		}
 	}
 
-	// Handle back_to_clients button
+	// Handle back_inbound_X button (back to clients list in specific inbound)
+	if strings.HasPrefix(data, "back_inbound_") {
+		parts := strings.Split(data, "_")
+		if len(parts) == 3 {
+			inboundID, err := strconv.Atoi(parts[2])
+			if err == nil {
+				if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+					CallbackQueryID: query.ID,
+				}); err != nil {
+					b.logger.Errorf("Failed to answer back to inbound clients callback: %v", err)
+				}
+				b.handleInboundClients(chatID, inboundID, messageID)
+				return nil
+			}
+		}
+	}
+
+	// Handle back_to_clients button (deprecated, redirects to inbounds list)
 	if data == "back_to_clients" {
 		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
@@ -888,9 +933,9 @@ func (b *Bot) handleClientMenu(chatID int64, messageID int, inboundID int, clien
 		tu.InlineKeyboardButton("🗑️ Удалить").WithCallbackData(fmt.Sprintf("delete_%d_%d", inboundID, clientIndex)),
 	})
 
-	// Back button
+	// Back button - return to clients list in current inbound
 	buttons = append(buttons, []telego.InlineKeyboardButton{
-		tu.InlineKeyboardButton("◀️ Назад").WithCallbackData("back_to_clients"),
+		tu.InlineKeyboardButton("◀️ Назад").WithCallbackData(fmt.Sprintf("back_inbound_%d", inboundID)),
 	})
 
 	keyboard := &telego.InlineKeyboardMarkup{InlineKeyboard: buttons}
