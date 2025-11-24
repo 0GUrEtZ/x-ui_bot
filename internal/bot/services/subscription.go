@@ -50,7 +50,7 @@ func (s *SubscriptionService) GetSubscriptionStatus(expiryTime int64) (icon stri
 	if days <= 0 {
 		return "⛔", "Истекла"
 	} else if days <= 3 {
-		return "🔴", fmt.Sprintf("%d дн. %d ч. (критично!)", days, hours)
+		return "❌", fmt.Sprintf("%d дн. %d ч. (критично!)", days, hours)
 	} else if days <= 7 {
 		return "⚠️", fmt.Sprintf("%d дн. %d ч.", days, hours)
 	}
@@ -61,18 +61,18 @@ func (s *SubscriptionService) GetSubscriptionStatus(expiryTime int64) (icon stri
 // GetTrafficStatus returns traffic status with emoji
 func (s *SubscriptionService) GetTrafficStatus(used, limit int64) (percentage float64, emoji string) {
 	if limit == 0 {
-		return 0, "🟢"
+		return 0, "✅"
 	}
 
 	percentage = float64(used) / float64(limit) * 100
 
 	if percentage >= 90 {
-		return percentage, "🔴"
+		return percentage, "❌"
 	} else if percentage >= 70 {
-		return percentage, "🟡"
+		return percentage, "⚠️"
 	}
 
-	return percentage, "🟢"
+	return percentage, "✅"
 }
 
 // FormatSubscriptionInfo formats subscription information for display

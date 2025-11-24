@@ -113,7 +113,7 @@ func Load() (*Config, error) {
 			cfg.Panels[i].LimitIP = 0 // Reset to 0 (unlimited) if negative
 		}
 		// Set default enabled to true if not specified
-		if i == 0 && panel.Enabled == false && len(cfg.Panels) == 1 {
+		if i == 0 && !panel.Enabled && len(cfg.Panels) == 1 {
 			// For single panel, always enable it
 			cfg.Panels[i].Enabled = true
 		}

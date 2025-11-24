@@ -84,7 +84,7 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 				statusIcon = "⛔"
 				statusText = "Истекла"
 			} else if daysRemaining <= 3 {
-				statusIcon = "🔴"
+				statusIcon = "❌"
 				statusText = fmt.Sprintf("%d дн. %d ч. (критично!)", daysRemaining, hoursRemaining)
 			} else if daysRemaining <= 7 {
 				statusIcon = "⚠️"
@@ -98,11 +98,13 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 			if totalGB > 0 {
 				limitBytes := totalGB
 				percentage := float64(total) / float64(limitBytes) * 100
-				trafficEmoji := "🟢"
+				var trafficEmoji string
 				if percentage >= 90 {
 					trafficEmoji = "🔴"
 				} else if percentage >= 70 {
-					trafficEmoji = "🟡"
+					trafficEmoji = "⚠️"
+				} else {
+					trafficEmoji = "✅"
 				}
 				msg += fmt.Sprintf("📊 Трафик: %s / %s %s (%.1f%%)\n",
 					b.clientService.FormatBytes(total),
@@ -195,9 +197,9 @@ func (b *Bot) handleStatus(chatID int64, isAdmin bool) {
 
 		// Show connection status
 		if panel.IsHealthy {
-			msg += "🟢 Connected\n"
+			msg += "✅ Connected\n"
 		} else {
-			msg += "🔴 Disconnected\n"
+			msg += "❌ Disconnected\n"
 			if panel.Error != "" {
 				msg += fmt.Sprintf("   Error: %s\n", panel.Error)
 			}
@@ -348,9 +350,9 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 				enable = e
 			}
 
-			statusEmoji := "🟢"
+			statusEmoji := "✅"
 			if !enable {
-				statusEmoji = "🔴"
+				statusEmoji = "❌"
 			}
 
 			// Button text: status + protocol + remark + port + client count
@@ -462,11 +464,11 @@ func (b *Bot) handleInboundClients(chatID int64, panelName string, inboundID int
 		if isExpired {
 			statusEmoji = "⛔" // Expired subscription
 		} else if enable == "false" {
-			statusEmoji = "🔴" // Blocked
+			statusEmoji = "❌" // Blocked
 		} else if isUnlimited {
 			statusEmoji = "💎" // Unlimited subscription
 		} else {
-			statusEmoji = "🟢" // Active
+			statusEmoji = "✅" // Active
 		}
 
 		// Get traffic info

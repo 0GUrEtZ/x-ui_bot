@@ -318,7 +318,7 @@ func (s *SQLiteStorage) GetTrafficHistory(days int) ([]TrafficRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var records []TrafficRecord
 	for rows.Next() {

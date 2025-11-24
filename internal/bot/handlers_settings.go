@@ -91,7 +91,7 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 			statusIcon = "⛔"
 			statusText = "Истекла"
 		} else if daysRemaining <= 3 {
-			statusIcon = "🔴"
+			statusIcon = "❌"
 			statusText = "Заканчивается"
 		} else if daysRemaining <= 7 {
 			statusIcon = "⚠️"
@@ -107,11 +107,13 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 	if totalGB > 0 {
 		limitBytes := totalGB
 		percentage := float64(total) / float64(limitBytes) * 100
-		trafficEmoji := "🟢"
+		var trafficEmoji string
 		if percentage >= 90 {
 			trafficEmoji = "🔴"
 		} else if percentage >= 70 {
-			trafficEmoji = "🟡"
+			trafficEmoji = "⚠️"
+		} else {
+			trafficEmoji = "✅"
 		}
 		trafficInfo += fmt.Sprintf(" / %s %s (%.1f%%)",
 			b.clientService.FormatBytes(limitBytes),

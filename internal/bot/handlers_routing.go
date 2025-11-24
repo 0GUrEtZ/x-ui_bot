@@ -685,10 +685,11 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	// Handle move_X_Y_Z buttons (move client to another inbound)
 	if strings.HasPrefix(data, "move_") {
 		parts := strings.Split(data, "_")
-		if len(parts) == 4 {
-			fromPanelName := parts[1]
-			fromInboundID, err1 := strconv.Atoi(parts[2])
-			clientIndex, err2 := strconv.Atoi(parts[3])
+		if len(parts) >= 4 && parts[0] == "move" {
+			// Handle panel names with spaces: reconstruct from parts[1] to parts[len(parts)-2]
+			fromPanelName := strings.Join(parts[1:len(parts)-2], "_")
+			fromInboundID, err1 := strconv.Atoi(parts[len(parts)-2])
+			clientIndex, err2 := strconv.Atoi(parts[len(parts)-1])
 
 			if err1 == nil && err2 == nil {
 				b.handleMoveClient(chatID, messageID, fromPanelName, fromInboundID, clientIndex)
@@ -699,17 +700,45 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 
 	// Handle move_confirm_X_Y_Z_A_B buttons (confirm client movement)
 	if strings.HasPrefix(data, "move_confirm_") {
-		parts := strings.Split(data, "_")
-		if len(parts) == 7 && parts[0] == "move" && parts[1] == "confirm" {
-			fromPanelName := parts[2]
-			fromInboundID, err1 := strconv.Atoi(parts[3])
-			clientIndex, err2 := strconv.Atoi(parts[4])
-			toPanelName := parts[5]
-			toInboundID, err3 := strconv.Atoi(parts[6])
+		// Remove prefix to get the remaining parts
+		remaining := strings.TrimPrefix(data, "move_confirm_")
+		parts := strings.Split(remaining, "_")
 
-			if err1 == nil && err2 == nil && err3 == nil {
-				b.handleMoveClientConfirm(chatID, messageID, fromPanelName, fromInboundID, clientIndex, toPanelName, toInboundID)
-				return nil
+		// Find indices of numeric parts (inboundID, clientIndex, toInboundID) from the end
+		if len(parts) >= 5 {
+			// Last element is toInboundID
+			toInboundID, err1 := strconv.Atoi(parts[len(parts)-1])
+			// Before that is toPanelName (could be multiple parts)
+			// Before toPanelName is clientIndex
+			// Before clientIndex is fromInboundID
+			// The rest is fromPanelName
+
+			// Try to find where numbers start from the end
+			numericIndices := []int{}
+			for i := len(parts) - 1; i >= 0; i-- {
+				if _, err := strconv.Atoi(parts[i]); err == nil {
+					numericIndices = append([]int{i}, numericIndices...)
+					if len(numericIndices) == 3 {
+						break
+					}
+				}
+			}
+
+			if len(numericIndices) == 3 {
+				fromInboundIdx := numericIndices[0]
+				clientIdx := numericIndices[1]
+				toInboundIdx := numericIndices[2]
+
+				fromInboundID, _ := strconv.Atoi(parts[fromInboundIdx])
+				clientIndex, _ := strconv.Atoi(parts[clientIdx])
+
+				fromPanelName := strings.Join(parts[:fromInboundIdx], " ")
+				toPanelName := strings.Join(parts[clientIdx+1:toInboundIdx], " ")
+
+				if err1 == nil {
+					b.handleMoveClientConfirm(chatID, messageID, fromPanelName, fromInboundID, clientIndex, toPanelName, toInboundID)
+					return nil
+				}
 			}
 		}
 	}
@@ -717,10 +746,11 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	// Handle back_client_X_Y_Z buttons (return to client menu)
 	if strings.HasPrefix(data, "back_client_") {
 		parts := strings.Split(data, "_")
-		if len(parts) == 4 {
-			fromPanelName := parts[2]
-			fromInboundID, err1 := strconv.Atoi(parts[3])
-			clientIndex, err2 := strconv.Atoi(parts[4])
+		if len(parts) >= 4 {
+			// Handle panel names with spaces: reconstruct from parts[2] to parts[len(parts)-2]
+			fromPanelName := strings.Join(parts[2:len(parts)-2], " ")
+			fromInboundID, err1 := strconv.Atoi(parts[len(parts)-2])
+			clientIndex, err2 := strconv.Atoi(parts[len(parts)-1])
 
 			if err1 == nil && err2 == nil {
 				b.handleClientMenu(chatID, messageID, fromPanelName, fromInboundID, clientIndex, query.ID)
@@ -1016,11 +1046,11 @@ func (b *Bot) handleClientMenu(chatID int64, messageID int, panelName string, in
 	}
 
 	// Status
-	statusText := "🟢 Активен"
+	statusText := "✅ Активен"
 	if isExpired {
 		statusText = "⛔ Истекла подписка"
 	} else if enable == "false" {
-		statusText = "🔴 Заблокирован"
+		statusText = "❌ Заблокирован"
 	} else if isUnlimited {
 		statusText = "💎 Безлимитная подписка"
 	}
@@ -1293,7 +1323,9 @@ func (b *Bot) handleMoveClientConfirm(chatID int64, messageID int, fromPanelName
 	err = fromClient.DeleteClient(fromInboundID, email)
 	if err != nil {
 		// Rollback: try to delete from destination if source deletion failed
-		toClient.DeleteClient(toInboundID, email)
+		if rollbackErr := toClient.DeleteClient(toInboundID, email); rollbackErr != nil {
+			b.logger.Errorf("Rollback failed: unable to delete client %s from destination panel %s inbound %d: %v", email, toPanelName, toInboundID, rollbackErr)
+		}
 		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка удаления клиента с исходной панели: %v. Перемещение отменено.", err))
 		return
 	}
