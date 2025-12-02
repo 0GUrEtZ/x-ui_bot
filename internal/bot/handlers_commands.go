@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"time"
+	"x-ui-bot/internal/bot/keyboard"
 
 	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
@@ -22,18 +23,9 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 		msg += "✅ Вы авторизованы как администратор\n\n"
 		msg += "Используйте кнопки ниже для управления:"
 
-		keyboard := tu.Keyboard(
-			tu.KeyboardRow(
-				tu.KeyboardButton("📊 Статус сервера"),
-				tu.KeyboardButton("👥 Список клиентов"),
-			),
-			tu.KeyboardRow(
-				tu.KeyboardButton("📢 Сделать объявление"),
-				tu.KeyboardButton("💾 Бэкап БД"),
-			),
-		).WithResizeKeyboard().WithIsPersistent()
+		kb := keyboard.BuildAdminKeyboard()
 
-		b.sendMessageWithKeyboard(chatID, msg, keyboard)
+		b.sendMessageWithKeyboard(chatID, msg, kb)
 	} else {
 		// Check if user is registered
 		clientInfo, err := b.apiClient.GetClientByTgID(chatID)
