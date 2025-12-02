@@ -263,7 +263,8 @@ func (s *ForecastService) CalculateForecast(inboundID int) (*TrafficForecast, er
 	remainingHours := nextMonth.Sub(now).Hours()
 	predictedExtra := int64(bytesPerHour * remainingHours)
 
-	currentTotal := totalConsumed // Sum for the month (we interpret totalConsumed as current usage)
+	// Current total is the latest snapshot value (absolute counter)
+	currentTotal := snapshots[len(snapshots)-1].TotalBytes
 	predictedTotal := currentTotal + predictedExtra
 
 	daysInMonth := int(nextMonth.Sub(monthStart).Hours() / 24)
