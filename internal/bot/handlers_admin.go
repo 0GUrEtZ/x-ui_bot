@@ -629,8 +629,8 @@ func (b *Bot) handleTrafficForecast(chatID int64) {
 		if v, ok := inbound["id"].(float64); ok {
 			inboundID = int(v)
 		}
-		remark := "Unknown"
-		if v, ok := inbound["remark"].(string); ok {
+		remark := fmt.Sprintf("Инбаунд #%d", inboundID)
+		if v, ok := inbound["remark"].(string); ok && v != "" {
 			remark = v
 		}
 
