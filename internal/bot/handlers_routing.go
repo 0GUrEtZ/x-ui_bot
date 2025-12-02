@@ -648,6 +648,12 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		return nil
 	}
 
+	// Handle forecast_inbound_X callbacks
+	if strings.HasPrefix(data, "forecast_inbound_") {
+		b.handleForecastInboundCallback(chatID, query.ID, data)
+		return nil
+	}
+
 	// Default callback response
 	if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 		CallbackQueryID: query.ID,
@@ -862,4 +868,31 @@ func (b *Bot) handleClientMenu(chatID int64, messageID int, inboundID int, clien
 	}); err != nil {
 		b.logger.Errorf("Failed to answer client menu callback: %v", err)
 	}
+}
+
+// handleForecastInboundCallback handles forecast_inbound_X callback
+func (b *Bot) handleForecastInboundCallback(chatID int64, callbackID string, data string) {
+	// Parse inbound ID from callback data: forecast_inbound_X
+	parts := strings.Split(data, "_")
+	if len(parts) != 3 {
+		b.logger.Errorf("Invalid forecast callback data: %s", data)
+		return
+	}
+
+	inboundID, err := strconv.Atoi(parts[2])
+	if err != nil {
+		b.logger.Errorf("Failed to parse inbound ID from callback: %v", err)
+		return
+	}
+
+	// Answer callback to remove loading spinner
+	if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+		CallbackQueryID: callbackID,
+		Text:            fmt.Sprintf("📊 Прогноз для инбаунда #%d", inboundID),
+	}); err != nil {
+		b.logger.Errorf("Failed to answer forecast callback: %v", err)
+	}
+
+	// Show forecast for this inbound
+	b.handleTrafficForecastInbound(chatID, inboundID)
 }

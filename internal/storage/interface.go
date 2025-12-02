@@ -41,6 +41,7 @@ type BroadcastState struct {
 // TrafficSnapshot - snapshot of server traffic at a given time
 type TrafficSnapshot struct {
 	ID            int64
+	InboundID     int
 	Timestamp     time.Time
 	UploadBytes   int64
 	DownloadBytes int64
@@ -77,8 +78,8 @@ type Storage interface {
 
 	// Traffic snapshots
 	SaveTrafficSnapshot(snapshot *TrafficSnapshot) error
-	GetTrafficSnapshots(startTime, endTime time.Time) ([]*TrafficSnapshot, error)
-	GetLatestTrafficSnapshot() (*TrafficSnapshot, error)
+	GetTrafficSnapshots(inboundID int, startTime, endTime time.Time) ([]*TrafficSnapshot, error)
+	GetLatestTrafficSnapshot(inboundID int) (*TrafficSnapshot, error)
 	DeleteOldTrafficSnapshots(beforeTime time.Time) error
 
 	// Cleanup

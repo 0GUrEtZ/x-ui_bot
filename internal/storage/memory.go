@@ -227,29 +227,31 @@ func (s *MemoryStorage) SaveTrafficSnapshot(snapshot *TrafficSnapshot) error {
 	return nil
 }
 
-func (s *MemoryStorage) GetTrafficSnapshots(startTime, endTime time.Time) ([]*TrafficSnapshot, error) {
+func (s *MemoryStorage) GetTrafficSnapshots(inboundID int, startTime, endTime time.Time) ([]*TrafficSnapshot, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var results []*TrafficSnapshot
 	for _, ts := range s.trafficSnapshots {
-		if (ts.Timestamp.Equal(startTime) || ts.Timestamp.After(startTime)) && (ts.Timestamp.Equal(endTime) || ts.Timestamp.Before(endTime)) {
+		if ts.InboundID == inboundID && (ts.Timestamp.Equal(startTime) || ts.Timestamp.After(startTime)) && (ts.Timestamp.Equal(endTime) || ts.Timestamp.Before(endTime)) {
 			results = append(results, ts)
 		}
 	}
 	return results, nil
 }
 
-func (s *MemoryStorage) GetLatestTrafficSnapshot() (*TrafficSnapshot, error) {
+func (s *MemoryStorage) GetLatestTrafficSnapshot(inboundID int) (*TrafficSnapshot, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if len(s.trafficSnapshots) == 0 {
-		return nil, fmt.Errorf("no traffic snapshots found")
-	}
-	latest := s.trafficSnapshots[0]
-	for _, ts := range s.trafficSnapshots[1:] {
-		if ts.Timestamp.After(latest.Timestamp) {
-			latest = ts
+	var latest *TrafficSnapshot
+	for _, ts := range s.trafficSnapshots {
+		if ts.InboundID == inboundID {
+			if latest == nil || ts.Timestamp.After(latest.Timestamp) {
+				latest = ts
+			}
 		}
+	}
+	if latest == nil {
+		return nil, fmt.Errorf("no traffic snapshots found")
 	}
 	return latest, nil
 }

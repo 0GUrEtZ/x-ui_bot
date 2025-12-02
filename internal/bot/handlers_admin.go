@@ -600,14 +600,64 @@ func (b *Bot) handleBackupRequest(chatID int64) {
 	}
 }
 
-// handleTrafficForecast handles admin request to view traffic forecast
+// handleTrafficForecast handles admin request to view traffic forecast - shows inbound selection
 func (b *Bot) handleTrafficForecast(chatID int64) {
 	if b.forecastService == nil {
 		b.sendMessage(chatID, "❌ Forecast service is not initialized")
 		return
 	}
 
-	forecast, err := b.forecastService.CalculateForecast()
+	// Get list of inbounds
+	inbounds, err := b.apiClient.GetInbounds()
+	if err != nil {
+		b.logger.Errorf("Failed to get inbounds: %v", err)
+		b.sendMessage(chatID, "❌ Ошибка при получении списка инбаундов")
+		return
+	}
+
+	b.logger.Infof("Got %d inbounds", len(inbounds))
+
+	if len(inbounds) == 0 {
+		b.sendMessage(chatID, "❌ Нет доступных инбаундов")
+		return
+	}
+
+	// Build inline keyboard with inbound selection
+	var buttons [][]telego.InlineKeyboardButton
+	for _, inbound := range inbounds {
+		inboundID := 0
+		if v, ok := inbound["id"].(float64); ok {
+			inboundID = int(v)
+		}
+		remark := "Unknown"
+		if v, ok := inbound["remark"].(string); ok {
+			remark = v
+		}
+
+		b.logger.Infof("Adding button for inbound %d: %s", inboundID, remark)
+
+		button := tu.InlineKeyboardButton(remark).
+			WithCallbackData(fmt.Sprintf("forecast_inbound_%d", inboundID))
+		buttons = append(buttons, []telego.InlineKeyboardButton{button})
+	}
+
+	b.logger.Infof("Total buttons: %d", len(buttons))
+
+	keyboard := &telego.InlineKeyboardMarkup{
+		InlineKeyboard: buttons,
+	}
+
+	b.sendMessageWithInlineKeyboard(chatID, "📊 Выберите инбаунд для прогноза:", keyboard)
+}
+
+// handleTrafficForecastInbound handles callback to show forecast for specific inbound
+func (b *Bot) handleTrafficForecastInbound(chatID int64, inboundID int) {
+	if b.forecastService == nil {
+		b.sendMessage(chatID, "❌ Forecast service is not initialized")
+		return
+	}
+
+	forecast, err := b.forecastService.CalculateForecast(inboundID)
 	if err != nil {
 		if err.Error() == "not enough data to build forecast" {
 			b.sendMessage(chatID, "⚠️ Недостаточно данных для прогноза. Подождите несколько замеров.")

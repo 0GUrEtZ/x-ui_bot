@@ -23,69 +23,79 @@ type ForecastService struct {
 	log              *logger.Logger
 	ticker           *time.Ticker
 	stopChan         chan struct{}
-	alertedThreshold bool
-	alertedPercent   bool
+	alertedThreshold map[int]bool // per-inbound threshold alert state
+	alertedPercent   map[int]bool // per-inbound percent alert state
 }
 
 // NewForecastService creates a new ForecastService
 func NewForecastService(apiClient *client.APIClient, store storage.Storage, bot *telego.Bot, cfg *config.Config, log *logger.Logger) *ForecastService {
 	return &ForecastService{
-		apiClient: apiClient,
-		storage:   store,
-		bot:       bot,
-		cfg:       cfg,
-		log:       log,
-		stopChan:  make(chan struct{}),
+		apiClient:        apiClient,
+		storage:          store,
+		bot:              bot,
+		cfg:              cfg,
+		log:              log,
+		stopChan:         make(chan struct{}),
+		alertedThreshold: make(map[int]bool),
+		alertedPercent:   make(map[int]bool),
 	}
 }
 
-// CollectTrafficData pulls server status and saves a snapshot
+// CollectTrafficData pulls inbound traffic and saves snapshots per inbound
 func (s *ForecastService) CollectTrafficData() error {
 	s.log.Infof("Collecting traffic data")
-	status, err := s.apiClient.GetStatus()
+	inbounds, err := s.apiClient.GetInbounds()
 	if err != nil {
-		s.log.Errorf("Failed to get status from API: %v", err)
+		s.log.Errorf("Failed to get inbounds from API: %v", err)
 		return err
 	}
 
-	// Parse netIO struct (obj.netIO.up/down)
-	obj, ok := status["obj"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("unexpected API response: missing obj")
-	}
-	netIO, ok := obj["netIO"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("unexpected API response: missing netIO")
-	}
+	now := time.Now().UTC()
+	for _, inbound := range inbounds {
+		up := int64(0)
+		down := int64(0)
 
-	up := int64(0)
-	down := int64(0)
-	if v, ok := netIO["up"].(float64); ok {
-		up = int64(v)
-	}
-	if v, ok := netIO["down"].(float64); ok {
-		down = int64(v)
-	}
+		// Parse up/down from inbound (they're typically at top level)
+		if v, ok := inbound["up"].(float64); ok {
+			up = int64(v)
+		}
+		if v, ok := inbound["down"].(float64); ok {
+			down = int64(v)
+		}
 
-	snapshot := &storage.TrafficSnapshot{
-		Timestamp:     time.Now().UTC(),
-		UploadBytes:   up,
-		DownloadBytes: down,
-		TotalBytes:    up + down,
-	}
+		inboundID := 0
+		if v, ok := inbound["id"].(float64); ok {
+			inboundID = int(v)
+		}
 
-	if err := s.storage.SaveTrafficSnapshot(snapshot); err != nil {
-		s.log.Errorf("Failed to save traffic snapshot: %v", err)
-		return err
+		snapshot := &storage.TrafficSnapshot{
+			InboundID:     inboundID,
+			Timestamp:     now,
+			UploadBytes:   up,
+			DownloadBytes: down,
+			TotalBytes:    up + down,
+		}
+
+		if err := s.storage.SaveTrafficSnapshot(snapshot); err != nil {
+			s.log.Errorf("Failed to save traffic snapshot for inbound %d: %v", inboundID, err)
+			return err
+		}
 	}
-	s.log.Infof("Saved traffic snapshot: up=%d down=%d total=%d", up, down, up+down)
-	// After saving, optionally calculate forecast and notify admins if threshold exceeded or percent reached
+	s.log.Infof("Saved traffic snapshots for %d inbounds", len(inbounds))
+
+	// Check alerts for each inbound
 	if s.cfg != nil && s.bot != nil {
-		forecast, err := s.CalculateForecast()
-		if err == nil {
-			s.evaluateAlerts(forecast)
-		} else {
-			s.log.Debugf("CalculateForecast not enough data or failed: %v", err)
+		for _, inbound := range inbounds {
+			inboundID := 0
+			if v, ok := inbound["id"].(float64); ok {
+				inboundID = int(v)
+			}
+			forecast, err := s.CalculateForecast(inboundID)
+			if err == nil {
+				s.evaluateAlerts(inboundID, forecast)
+			} else {
+				s.log.Debugf("CalculateForecast for inbound %d: %v", inboundID, err)
+			}
 		}
 	}
 	return nil
@@ -111,8 +121,8 @@ func (s *ForecastService) notifyAdmins(message string) {
 	}
 }
 
-// evaluateAlerts checks crossing thresholds and sends notifications only when crossing
-func (s *ForecastService) evaluateAlerts(forecast *TrafficForecast) {
+// evaluateAlerts checks crossing thresholds and sends notifications only when crossing (per-inbound)
+func (s *ForecastService) evaluateAlerts(inboundID int, forecast *TrafficForecast) {
 	// Determine base threshold in bytes: prefer TrafficAlertThresholdGB; otherwise use TrafficLimitGB
 	thresholdGB := int64(s.cfg.Panel.TrafficAlertThresholdGB)
 	if thresholdGB <= 0 {
@@ -131,35 +141,39 @@ func (s *ForecastService) evaluateAlerts(forecast *TrafficForecast) {
 	}
 	percentBytes := thresholdBytes * int64(percent) / 100
 
-	// Crossing percent threshold
-	if !s.alertedPercent && forecast.PredictedTotal >= percentBytes {
+	// Crossing percent threshold for this inbound
+	if !s.alertedPercent[inboundID] && forecast.PredictedTotal >= percentBytes {
 		// send percent alert
-		alert := fmt.Sprintf("⚠️ Прогноз трафика достиг %d%% от порога (%d GB)\n\n%s", percent, thresholdGB, s.FormatForecastMessage(forecast))
+		alert := fmt.Sprintf("⚠️ Инбаунд #%d: Прогноз трафика достиг %d%% от порога (%d GB)\n\n%s", inboundID, percent, thresholdGB, s.FormatForecastMessage(forecast))
 		s.notifyAdmins(alert)
-		s.alertedPercent = true
+		s.alertedPercent[inboundID] = true
 	}
-	if s.alertedPercent && forecast.PredictedTotal < percentBytes {
+	if s.alertedPercent[inboundID] && forecast.PredictedTotal < percentBytes {
 		// reset flag when below
-		s.alertedPercent = false
+		s.alertedPercent[inboundID] = false
 	}
 
-	// Crossing absolute threshold
-	if !s.alertedThreshold && forecast.PredictedTotal >= thresholdBytes {
-		alert := fmt.Sprintf("⚠️ Прогноз трафика превысил порог %d GB\n\n%s", thresholdGB, s.FormatForecastMessage(forecast))
+	// Crossing absolute threshold for this inbound
+	if !s.alertedThreshold[inboundID] && forecast.PredictedTotal >= thresholdBytes {
+		alert := fmt.Sprintf("⚠️ Инбаунд #%d: Прогноз трафика превысил порог %d GB\n\n%s", inboundID, thresholdGB, s.FormatForecastMessage(forecast))
 		s.notifyAdmins(alert)
-		s.alertedThreshold = true
+		s.alertedThreshold[inboundID] = true
 	}
-	if s.alertedThreshold && forecast.PredictedTotal < thresholdBytes {
-		s.alertedThreshold = false
+	if s.alertedThreshold[inboundID] && forecast.PredictedTotal < thresholdBytes {
+		s.alertedThreshold[inboundID] = false
 	}
 }
 
-// StartScheduler starts the periodic collection using a 4-hour ticker
+// StartScheduler starts the periodic collection using a 4-hour ticker and daily cleanup
 func (s *ForecastService) StartScheduler(ctx context.Context) {
 	// Collect immediately
 	_ = s.CollectTrafficData()
 
+	// Start data collection ticker (every 4 hours)
 	s.ticker = time.NewTicker(4 * time.Hour)
+	// Start cleanup ticker (every 24 hours)
+	cleanupTicker := time.NewTicker(24 * time.Hour)
+
 	go func() {
 		for {
 			select {
@@ -168,10 +182,19 @@ func (s *ForecastService) StartScheduler(ctx context.Context) {
 				if s.ticker != nil {
 					s.ticker.Stop()
 				}
+				cleanupTicker.Stop()
 				return
 			case <-s.ticker.C:
 				if err := s.CollectTrafficData(); err != nil {
 					s.log.Errorf("CollectTrafficData failed: %v", err)
+				}
+			case <-cleanupTicker.C:
+				// Delete traffic snapshots older than 30 days
+				cutoff := time.Now().Add(-30 * 24 * time.Hour)
+				if err := s.storage.DeleteOldTrafficSnapshots(cutoff); err != nil {
+					s.log.Errorf("Failed to delete old traffic snapshots: %v", err)
+				} else {
+					s.log.Infof("Deleted traffic snapshots older than 30 days")
 				}
 			}
 		}
@@ -199,14 +222,14 @@ type TrafficForecast struct {
 	LastUpdate     time.Time
 }
 
-// CalculateForecast builds a simple forecast to the end of the month
-func (s *ForecastService) CalculateForecast() (*TrafficForecast, error) {
+// CalculateForecast builds a simple forecast to the end of the month for a specific inbound
+func (s *ForecastService) CalculateForecast(inboundID int) (*TrafficForecast, error) {
 	now := time.Now().UTC()
 	year, month, _ := now.Date()
 	loc := time.UTC
 	monthStart := time.Date(year, month, 1, 0, 0, 0, 0, loc)
 
-	snapshots, err := s.storage.GetTrafficSnapshots(monthStart, now)
+	snapshots, err := s.storage.GetTrafficSnapshots(inboundID, monthStart, now)
 	if err != nil {
 		return nil, err
 	}

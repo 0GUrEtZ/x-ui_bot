@@ -71,12 +71,13 @@ func (s *SQLiteStorage) initialize() error {
 
 	CREATE TABLE IF NOT EXISTS traffic_snapshots (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		inbound_id INTEGER NOT NULL,
 		timestamp DATETIME NOT NULL,
 		upload_bytes INTEGER NOT NULL,
 		download_bytes INTEGER NOT NULL,
 		total_bytes INTEGER NOT NULL
 	);
-	CREATE INDEX IF NOT EXISTS idx_traffic_timestamp ON traffic_snapshots(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_traffic_inbound_timestamp ON traffic_snapshots(inbound_id, timestamp);
 	`
 
 	_, err := s.db.Exec(schema)
@@ -252,16 +253,16 @@ func (s *SQLiteStorage) DeleteBroadcastState(adminID int64) error {
 // Traffic snapshots
 func (s *SQLiteStorage) SaveTrafficSnapshot(snapshot *TrafficSnapshot) error {
 	_, err := s.db.Exec(
-		"INSERT INTO traffic_snapshots (timestamp, upload_bytes, download_bytes, total_bytes) VALUES (?, ?, ?, ?)",
-		snapshot.Timestamp, snapshot.UploadBytes, snapshot.DownloadBytes, snapshot.TotalBytes,
+		"INSERT INTO traffic_snapshots (inbound_id, timestamp, upload_bytes, download_bytes, total_bytes) VALUES (?, ?, ?, ?, ?)",
+		snapshot.InboundID, snapshot.Timestamp, snapshot.UploadBytes, snapshot.DownloadBytes, snapshot.TotalBytes,
 	)
 	return err
 }
 
-func (s *SQLiteStorage) GetTrafficSnapshots(startTime, endTime time.Time) ([]*TrafficSnapshot, error) {
+func (s *SQLiteStorage) GetTrafficSnapshots(inboundID int, startTime, endTime time.Time) ([]*TrafficSnapshot, error) {
 	rows, err := s.db.Query(
-		"SELECT id, timestamp, upload_bytes, download_bytes, total_bytes FROM traffic_snapshots WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC",
-		startTime, endTime,
+		"SELECT id, inbound_id, timestamp, upload_bytes, download_bytes, total_bytes FROM traffic_snapshots WHERE inbound_id = ? AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC",
+		inboundID, startTime, endTime,
 	)
 	if err != nil {
 		return nil, err
@@ -271,7 +272,7 @@ func (s *SQLiteStorage) GetTrafficSnapshots(startTime, endTime time.Time) ([]*Tr
 	var results []*TrafficSnapshot
 	for rows.Next() {
 		ts := &TrafficSnapshot{}
-		if err := rows.Scan(&ts.ID, &ts.Timestamp, &ts.UploadBytes, &ts.DownloadBytes, &ts.TotalBytes); err != nil {
+		if err := rows.Scan(&ts.ID, &ts.InboundID, &ts.Timestamp, &ts.UploadBytes, &ts.DownloadBytes, &ts.TotalBytes); err != nil {
 			return nil, err
 		}
 		results = append(results, ts)
@@ -279,11 +280,12 @@ func (s *SQLiteStorage) GetTrafficSnapshots(startTime, endTime time.Time) ([]*Tr
 	return results, rows.Err()
 }
 
-func (s *SQLiteStorage) GetLatestTrafficSnapshot() (*TrafficSnapshot, error) {
+func (s *SQLiteStorage) GetLatestTrafficSnapshot(inboundID int) (*TrafficSnapshot, error) {
 	ts := &TrafficSnapshot{}
 	err := s.db.QueryRow(
-		"SELECT id, timestamp, upload_bytes, download_bytes, total_bytes FROM traffic_snapshots ORDER BY timestamp DESC LIMIT 1",
-	).Scan(&ts.ID, &ts.Timestamp, &ts.UploadBytes, &ts.DownloadBytes, &ts.TotalBytes)
+		"SELECT id, inbound_id, timestamp, upload_bytes, download_bytes, total_bytes FROM traffic_snapshots WHERE inbound_id = ? ORDER BY timestamp DESC LIMIT 1",
+		inboundID,
+	).Scan(&ts.ID, &ts.InboundID, &ts.Timestamp, &ts.UploadBytes, &ts.DownloadBytes, &ts.TotalBytes)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("no traffic snapshots found")
