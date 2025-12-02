@@ -52,15 +52,6 @@ func Wrap(err error, code, message string) *BotError {
 	}
 }
 
-// NotFound creates a not found error
-func NotFound(message string) *BotError {
-	return &BotError{
-		Code:    "NOT_FOUND",
-		Message: message,
-		Err:     ErrNotFound,
-	}
-}
-
 // Unauthorized creates an unauthorized error
 func Unauthorized(message string) *BotError {
 	return &BotError{
@@ -70,56 +61,11 @@ func Unauthorized(message string) *BotError {
 	}
 }
 
-// InvalidInput creates an invalid input error
-func InvalidInput(message string) *BotError {
-	return &BotError{
-		Code:    "INVALID_INPUT",
-		Message: message,
-		Err:     ErrInvalidInput,
-	}
-}
-
-// RateLimitExceeded creates a rate limit error
+// RateLimitExceeded creates a rate limit exceeded error
 func RateLimitExceeded(message string) *BotError {
 	return &BotError{
-		Code:    "RATE_LIMIT_EXCEEDED",
+		Code:    "RATE_LIMIT",
 		Message: message,
 		Err:     ErrRateLimitExceeded,
-	}
-}
-
-// ClientBlocked creates a client blocked error
-func ClientBlocked(message string) *BotError {
-	return &BotError{
-		Code:    "CLIENT_BLOCKED",
-		Message: message,
-		Err:     ErrClientBlocked,
-	}
-}
-
-// APIError creates an API error
-func APIError(message string, err error) *BotError {
-	return &BotError{
-		Code:    "API_ERROR",
-		Message: message,
-		Err:     err,
-	}
-}
-
-// DatabaseError creates a database error
-func DatabaseError(message string, err error) *BotError {
-	return &BotError{
-		Code:    "DATABASE_ERROR",
-		Message: message,
-		Err:     err,
-	}
-}
-
-// InternalError creates an internal error
-func InternalError(message string, err error) *BotError {
-	return &BotError{
-		Code:    "INTERNAL_ERROR",
-		Message: message,
-		Err:     err,
 	}
 }

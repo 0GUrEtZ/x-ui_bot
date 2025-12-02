@@ -123,14 +123,6 @@ func (l *Logger) FatalErr(err error, msg string) {
 }
 
 // Convenience functions for global logger
-func Debug(msg string) {
-	GetLogger().Debug(msg)
-}
-
-func Debugf(format string, args ...interface{}) {
-	GetLogger().Debugf(format, args...)
-}
-
 func Info(msg string) {
 	GetLogger().Info(msg)
 }

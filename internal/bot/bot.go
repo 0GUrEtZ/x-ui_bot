@@ -52,6 +52,7 @@ type Bot struct {
 	subscriptionService *services.SubscriptionService
 	backupService       *services.BackupService
 	broadcastService    *services.BroadcastService
+	forecastService     *services.ForecastService
 
 	// Middleware
 	authMiddleware *middleware.AuthMiddleware
@@ -80,6 +81,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bo
 	subscriptionService := services.NewSubscriptionService(log)
 	backupService := services.NewBackupService(apiClient, bot, cfg, log)
 	broadcastService := services.NewBroadcastService(apiClient, bot, log)
+	forecastService := services.NewForecastService(apiClient, store, bot, cfg, log)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg)
@@ -95,6 +97,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bo
 		subscriptionService: subscriptionService,
 		backupService:       backupService,
 		broadcastService:    broadcastService,
+		forecastService:     forecastService,
 		authMiddleware:      authMiddleware,
 		rateLimiter:         rateLimiter,
 		stopBackup:          make(chan struct{}),
@@ -160,6 +163,10 @@ func (b *Bot) Stop() {
 		close(b.stopBackup)
 	}
 
+	if b.forecastService != nil {
+		b.forecastService.Stop()
+	}
+
 	// Close storage
 	if b.storage != nil {
 		if err := b.storage.Close(); err != nil {
@@ -197,6 +204,15 @@ func (b *Bot) receiveMessages() {
 
 		handler.Start() //nolint:errcheck // handler.Start() doesn't return error
 	}()
+
+	// Start traffic forecast scheduler (uses same ctx so it stops when ctx cancelled)
+	if b.forecastService != nil {
+		b.wg.Add(1)
+		go func() {
+			defer b.wg.Done()
+			b.forecastService.StartScheduler(ctx)
+		}()
+	}
 
 	// Start cleanup goroutine for expired states (24h TTL)
 	b.wg.Add(1)

@@ -169,6 +169,12 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 			return nil
 		}
 		b.handleStatus(chatID, isAdmin)
+	case "📊 Прогноз трафика":
+		if !isAdmin {
+			b.sendMessage(chatID, "⛔ У вас нет прав")
+			return nil
+		}
+		b.handleTrafficForecast(chatID)
 	case "👥 Список клиентов":
 		if !isAdmin {
 			b.sendMessage(chatID, "⛔ У вас нет прав")

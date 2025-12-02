@@ -21,7 +21,11 @@ type PanelConfig struct {
 	Password       string `yaml:"password"`
 	LimitIP        int    `yaml:"limit_ip"`
 	TrafficLimitGB int    `yaml:"traffic_limit_gb"`
-	BackupDays     int    `yaml:"backup_days"` // Backup interval in days (0 = disabled)
+	// TrafficAlertThresholdGB - if >0, send an alert to admins when forecast exceeds this GB
+	TrafficAlertThresholdGB int `yaml:"traffic_alert_threshold_gb"`
+	// Traffic alert percentage (e.g., 90) — alert when predicted reaches this percent of threshold
+	TrafficAlertPercent int `yaml:"traffic_alert_percent"`
+	BackupDays          int `yaml:"backup_days"` // Backup interval in days (0 = disabled)
 }
 
 // TelegramConfig holds Telegram bot configuration

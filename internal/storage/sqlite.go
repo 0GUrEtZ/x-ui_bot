@@ -68,6 +68,15 @@ func (s *SQLiteStorage) initialize() error {
 		message TEXT NOT NULL,
 		timestamp DATETIME NOT NULL
 	);
+
+	CREATE TABLE IF NOT EXISTS traffic_snapshots (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		timestamp DATETIME NOT NULL,
+		upload_bytes INTEGER NOT NULL,
+		download_bytes INTEGER NOT NULL,
+		total_bytes INTEGER NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_traffic_timestamp ON traffic_snapshots(timestamp);
 	`
 
 	_, err := s.db.Exec(schema)
@@ -240,6 +249,53 @@ func (s *SQLiteStorage) DeleteBroadcastState(adminID int64) error {
 	return err
 }
 
+// Traffic snapshots
+func (s *SQLiteStorage) SaveTrafficSnapshot(snapshot *TrafficSnapshot) error {
+	_, err := s.db.Exec(
+		"INSERT INTO traffic_snapshots (timestamp, upload_bytes, download_bytes, total_bytes) VALUES (?, ?, ?, ?)",
+		snapshot.Timestamp, snapshot.UploadBytes, snapshot.DownloadBytes, snapshot.TotalBytes,
+	)
+	return err
+}
+
+func (s *SQLiteStorage) GetTrafficSnapshots(startTime, endTime time.Time) ([]*TrafficSnapshot, error) {
+	rows, err := s.db.Query(
+		"SELECT id, timestamp, upload_bytes, download_bytes, total_bytes FROM traffic_snapshots WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC",
+		startTime, endTime,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var results []*TrafficSnapshot
+	for rows.Next() {
+		ts := &TrafficSnapshot{}
+		if err := rows.Scan(&ts.ID, &ts.Timestamp, &ts.UploadBytes, &ts.DownloadBytes, &ts.TotalBytes); err != nil {
+			return nil, err
+		}
+		results = append(results, ts)
+	}
+	return results, rows.Err()
+}
+
+func (s *SQLiteStorage) GetLatestTrafficSnapshot() (*TrafficSnapshot, error) {
+	ts := &TrafficSnapshot{}
+	err := s.db.QueryRow(
+		"SELECT id, timestamp, upload_bytes, download_bytes, total_bytes FROM traffic_snapshots ORDER BY timestamp DESC LIMIT 1",
+	).Scan(&ts.ID, &ts.Timestamp, &ts.UploadBytes, &ts.DownloadBytes, &ts.TotalBytes)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("no traffic snapshots found")
+	}
+	return ts, err
+}
+
+func (s *SQLiteStorage) DeleteOldTrafficSnapshots(beforeTime time.Time) error {
+	_, err := s.db.Exec("DELETE FROM traffic_snapshots WHERE timestamp < ?", beforeTime)
+	return err
+}
+
 // CleanupExpiredStates removes states older than maxAge
 func (s *SQLiteStorage) CleanupExpiredStates(maxAge time.Duration) error {
 	cutoff := time.Now().Add(-maxAge)
@@ -249,6 +305,7 @@ func (s *SQLiteStorage) CleanupExpiredStates(maxAge time.Duration) error {
 		"admin_message_states",
 		"user_message_states",
 		"broadcast_states",
+		"traffic_snapshots",
 	}
 
 	for _, table := range tables {

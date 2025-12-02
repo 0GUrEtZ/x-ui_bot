@@ -13,6 +13,7 @@ type MemoryStorage struct {
 	adminMessageState map[int64]*AdminMessageState
 	userMessageState  map[int64]*UserMessageState
 	broadcastState    map[int64]*BroadcastState
+	trafficSnapshots  []*TrafficSnapshot
 	mu                sync.RWMutex
 }
 
@@ -24,6 +25,7 @@ func NewMemoryStorage() *MemoryStorage {
 		adminMessageState: make(map[int64]*AdminMessageState),
 		userMessageState:  make(map[int64]*UserMessageState),
 		broadcastState:    make(map[int64]*BroadcastState),
+		trafficSnapshots:  make([]*TrafficSnapshot, 0),
 	}
 }
 
@@ -199,10 +201,68 @@ func (s *MemoryStorage) CleanupExpiredStates(maxAge time.Duration) error {
 		}
 	}
 
+	// Cleanup traffic snapshots older than maxAge
+	cutoff := now.Add(-maxAge)
+	newSnapshots := make([]*TrafficSnapshot, 0, len(s.trafficSnapshots))
+	for _, ts := range s.trafficSnapshots {
+		if ts.Timestamp.After(cutoff) || ts.Timestamp.Equal(cutoff) {
+			newSnapshots = append(newSnapshots, ts)
+		}
+	}
+	s.trafficSnapshots = newSnapshots
+
 	return nil
 }
 
 // Close closes the storage (no-op for memory storage)
 func (s *MemoryStorage) Close() error {
+	return nil
+}
+
+// Traffic snapshots (in-memory)
+func (s *MemoryStorage) SaveTrafficSnapshot(snapshot *TrafficSnapshot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.trafficSnapshots = append(s.trafficSnapshots, snapshot)
+	return nil
+}
+
+func (s *MemoryStorage) GetTrafficSnapshots(startTime, endTime time.Time) ([]*TrafficSnapshot, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var results []*TrafficSnapshot
+	for _, ts := range s.trafficSnapshots {
+		if (ts.Timestamp.Equal(startTime) || ts.Timestamp.After(startTime)) && (ts.Timestamp.Equal(endTime) || ts.Timestamp.Before(endTime)) {
+			results = append(results, ts)
+		}
+	}
+	return results, nil
+}
+
+func (s *MemoryStorage) GetLatestTrafficSnapshot() (*TrafficSnapshot, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.trafficSnapshots) == 0 {
+		return nil, fmt.Errorf("no traffic snapshots found")
+	}
+	latest := s.trafficSnapshots[0]
+	for _, ts := range s.trafficSnapshots[1:] {
+		if ts.Timestamp.After(latest.Timestamp) {
+			latest = ts
+		}
+	}
+	return latest, nil
+}
+
+func (s *MemoryStorage) DeleteOldTrafficSnapshots(beforeTime time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	newList := make([]*TrafficSnapshot, 0, len(s.trafficSnapshots))
+	for _, ts := range s.trafficSnapshots {
+		if ts.Timestamp.After(beforeTime) || ts.Timestamp.Equal(beforeTime) {
+			newList = append(newList, ts)
+		}
+	}
+	s.trafficSnapshots = newList
 	return nil
 }

@@ -13,6 +13,10 @@ panel:
   limit_ip: 5  # Limit of simultaneous IP connections per user (0 = unlimited)
   traffic_limit_gb: 100  # Traffic limit per user in GB (0 = unlimited)
   backup_days: 7  # Backup database every N days to admins (0 = disabled)
+  # Alert threshold in GB — if forecast exceeds this threshold, bot will notify admins (0 = disabled)
+  traffic_alert_threshold_gb: 0
+  # Percent of the threshold at which to alert (e.g., 90 = 90%)
+  traffic_alert_percent: 90
 
 payment:
   bank: "Сбербанк"

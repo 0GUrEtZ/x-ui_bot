@@ -599,3 +599,25 @@ func (b *Bot) handleBackupRequest(chatID int64) {
 		b.logger.Infof("Manual backup sent to admin %d", chatID)
 	}
 }
+
+// handleTrafficForecast handles admin request to view traffic forecast
+func (b *Bot) handleTrafficForecast(chatID int64) {
+	if b.forecastService == nil {
+		b.sendMessage(chatID, "❌ Forecast service is not initialized")
+		return
+	}
+
+	forecast, err := b.forecastService.CalculateForecast()
+	if err != nil {
+		if err.Error() == "not enough data to build forecast" {
+			b.sendMessage(chatID, "⚠️ Недостаточно данных для прогноза. Подождите несколько замеров.")
+			return
+		}
+		b.logger.Errorf("Failed to calculate forecast: %v", err)
+		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка при расчете прогноза: %v", err))
+		return
+	}
+
+	msg := b.forecastService.FormatForecastMessage(forecast)
+	b.sendMessage(chatID, msg)
+}

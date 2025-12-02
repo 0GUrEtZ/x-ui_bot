@@ -43,3 +43,6 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# AI Todo
+.ai_todo/

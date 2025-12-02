@@ -41,12 +41,15 @@ Detailed architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - Bulk announcements
 - Manual database backups
 - Direct user communication
+- Traffic forecasting with smart alerts
 
 **System:**
 - Rate limiting (10 req/min per user)
 - Session TTL (24h)
 - Client data caching with invalidation
 - Automatic periodic backups
+- Traffic monitoring (4-hour snapshots)
+- Predictive analytics for monthly usage
 
 ## Installation
 
@@ -81,6 +84,8 @@ panel:
   limit_ip: 5                  # Client IP limit (0 = unlimited)
   traffic_limit_gb: 100        # Traffic limit (0 = unlimited)
   backup_days: 7               # Auto-backup interval (0 = disabled)
+  traffic_alert_threshold_gb: 100  # Alert threshold (0 = disabled)
+  traffic_alert_percent: 90    # Alert at N% of threshold
 
 payment:
   bank: "Bank Name"
@@ -92,6 +97,33 @@ payment:
     three_month: 800
     six_month: 1500
     one_year: 2800
+```
+
+## Traffic Forecasting
+
+**Automatic Monitoring:**
+- Collects server traffic data every 4 hours
+- Stores snapshots in SQLite database
+- Calculates monthly usage predictions
+- Sends smart alerts to admins
+
+**Alert System:**
+- **Approach Warning**: Notifies at 90% of configured threshold
+- **Threshold Alert**: Notifies when forecast exceeds limit
+- **One-time Notifications**: Alerts only on threshold crossing (no spam)
+- Alerts reset when usage drops below threshold
+
+**Admin Dashboard:**
+- Current month consumption
+- Predicted total by month end
+- Average daily usage
+- Days elapsed/remaining
+- Last update timestamp
+
+**Configuration:**
+```yaml
+traffic_alert_threshold_gb: 100  # Alert threshold in GB (0 = disabled)
+traffic_alert_percent: 90        # Alert at 90% of threshold
 ```
 
 ## Code Quality
@@ -112,8 +144,4 @@ payment:
 
 ```bash
 docker logs x-ui-bot -f
-```
-
-## Version
-
-**v1.1.0** - Code quality improvements, architecture documentation, comprehensive error handling
+``

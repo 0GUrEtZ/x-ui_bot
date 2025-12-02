@@ -38,6 +38,15 @@ type BroadcastState struct {
 	Timestamp time.Time
 }
 
+// TrafficSnapshot - snapshot of server traffic at a given time
+type TrafficSnapshot struct {
+	ID            int64
+	Timestamp     time.Time
+	UploadBytes   int64
+	DownloadBytes int64
+	TotalBytes    int64
+}
+
 // Storage defines the interface for state persistence
 type Storage interface {
 	// User states
@@ -65,6 +74,12 @@ type Storage interface {
 	SetBroadcastState(adminID int64, state *BroadcastState) error
 	GetBroadcastState(adminID int64) (*BroadcastState, error)
 	DeleteBroadcastState(adminID int64) error
+
+	// Traffic snapshots
+	SaveTrafficSnapshot(snapshot *TrafficSnapshot) error
+	GetTrafficSnapshots(startTime, endTime time.Time) ([]*TrafficSnapshot, error)
+	GetLatestTrafficSnapshot() (*TrafficSnapshot, error)
+	DeleteOldTrafficSnapshots(beforeTime time.Time) error
 
 	// Cleanup
 	CleanupExpiredStates(maxAge time.Duration) error

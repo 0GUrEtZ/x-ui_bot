@@ -10,10 +10,13 @@ func BuildAdminKeyboard() *telego.ReplyKeyboardMarkup {
 	return tu.Keyboard(
 		tu.KeyboardRow(
 			tu.KeyboardButton("📊 Статус сервера"),
-			tu.KeyboardButton("👥 Список клиентов"),
+			tu.KeyboardButton("📊 Прогноз трафика"),
 		),
 		tu.KeyboardRow(
+			tu.KeyboardButton("👥 Список клиентов"),
 			tu.KeyboardButton("📢 Сделать объявление"),
+		),
+		tu.KeyboardRow(
 			tu.KeyboardButton("💾 Бэкап БД"),
 		),
 	).WithResizeKeyboard().WithIsPersistent()
