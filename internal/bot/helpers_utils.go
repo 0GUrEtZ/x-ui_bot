@@ -130,7 +130,22 @@ func (b *Bot) findClientByTgID(userID int64) (client map[string]string, inboundI
 	return nil, 0, "", fmt.Errorf("client not found for user ID %d", userID)
 }
 
-// (instructions URL is removed - instructions are included in the welcome text)
+// createInstructionsKeyboard creates inline keyboard with platform options for instructions
+func (b *Bot) createInstructionsKeyboard() *telego.InlineKeyboardMarkup {
+	return tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("📱 iOS").WithCallbackData("instr_ios"),
+			tu.InlineKeyboardButton("💻 MacOS").WithCallbackData("instr_macos"),
+		),
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("🤖 Android").WithCallbackData("instr_android"),
+			tu.InlineKeyboardButton("🖥️ Windows").WithCallbackData("instr_windows"),
+		),
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("◀️ Назад").WithCallbackData("instr_back"),
+		),
+	)
+}
 
 // createDurationKeyboard creates inline keyboard with duration options and prices
 // callbackPrefix should be "reg_duration" for registration or "extend_<userID>" for extension

@@ -26,3 +26,9 @@ payment:
     three_month: 800
     six_month: 1500
     one_year: 2800
+
+instructions:
+  ios: "https://telegra.ph/ios-instructions"
+  macos: "https://telegra.ph/macos-instructions"
+  android: "https://telegra.ph/android-instructions"
+  windows: "https://telegra.ph/windows-instructions"

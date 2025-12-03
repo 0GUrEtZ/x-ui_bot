@@ -1,12 +1,14 @@
 package bot
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
 	"time"
 	"unicode/utf8"
 
+	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
 )
 
@@ -147,7 +149,14 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 		html.EscapeString(subLink),
 	)
 
-	b.sendMessage(chatID, msg)
+	// Create keyboard with Instructions button
+	keyboard := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("📖 Инструкции").WithCallbackData("instructions_menu"),
+		),
+	)
+
+	b.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
 	b.logger.Infof("Sent subscription info to user %d", userID)
 }
 
@@ -254,5 +263,87 @@ func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
 	// Clear state
 	if err := b.deleteUserState(chatID); err != nil {
 		b.logger.Errorf("Failed to delete user state: %v", err)
+	}
+}
+
+// handleInstructionsMenu shows the platform selection menu
+func (b *Bot) handleInstructionsMenu(chatID int64, messageID int) {
+	keyboard := b.createInstructionsKeyboard()
+
+	// Edit the message to show the instructions menu
+	_, err := b.bot.EditMessageText(context.Background(), &telego.EditMessageTextParams{
+		ChatID:      telego.ChatID{ID: chatID},
+		MessageID:   messageID,
+		Text:        "📖 <b>Инструкции по настройке</b>\n\nВыберите ваше устройство:",
+		ParseMode:   telego.ModeHTML,
+		ReplyMarkup: keyboard,
+	})
+	if err != nil {
+		b.logger.Errorf("Failed to edit message to instructions menu: %v", err)
+		// If edit fails (e.g. message too old), send a new one
+		b.sendMessageWithInlineKeyboard(chatID, "📖 <b>Инструкции по настройке</b>\n\nВыберите ваше устройство:", keyboard)
+	}
+}
+
+// handleInstructionPlatform sends the link for the selected platform
+func (b *Bot) handleInstructionPlatform(chatID int64, userID int64, messageID int, platform string) {
+	if platform == "back" {
+		// Delete the instructions message
+		b.bot.DeleteMessage(context.Background(), &telego.DeleteMessageParams{
+			ChatID:    telego.ChatID{ID: chatID},
+			MessageID: messageID,
+		})
+
+		// Show subscription info again
+		b.handleMySubscription(chatID, userID)
+		return
+	}
+
+	var url string
+	var platformName string
+
+	switch platform {
+	case "ios":
+		url = b.config.Instructions.IOS
+		platformName = "iOS"
+	case "macos":
+		url = b.config.Instructions.MacOS
+		platformName = "macOS"
+	case "android":
+		url = b.config.Instructions.Android
+		platformName = "Android"
+	case "windows":
+		url = b.config.Instructions.Windows
+		platformName = "Windows"
+	}
+
+	if url == "" {
+		// Answer with alert
+		b.sendMessage(chatID, fmt.Sprintf("❌ Инструкция для %s не найдена.", platformName))
+		return
+	}
+
+	msg := fmt.Sprintf("📄 <b>Инструкция для %s</b>\n\n<a href=\"%s\">Нажмите здесь, чтобы открыть инструкцию</a>", platformName, url)
+
+	keyboard := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("🔗 Открыть инструкцию").WithURL(url),
+		),
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("◀️ Назад").WithCallbackData("instructions_menu"),
+		),
+	)
+
+	// Edit the message to show the link
+	_, err := b.bot.EditMessageText(context.Background(), &telego.EditMessageTextParams{
+		ChatID:      telego.ChatID{ID: chatID},
+		MessageID:   messageID,
+		Text:        msg,
+		ParseMode:   telego.ModeHTML,
+		ReplyMarkup: keyboard,
+	})
+	if err != nil {
+		b.logger.Errorf("Failed to edit message to instruction link: %v", err)
+		b.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
 	}
 }

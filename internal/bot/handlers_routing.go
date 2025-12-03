@@ -654,6 +654,29 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		return nil
 	}
 
+	// Handle instructions menu
+	if data == "instructions_menu" {
+		b.handleInstructionsMenu(chatID, messageID)
+		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+		}); err != nil {
+			b.logger.Errorf("Failed to answer instructions menu callback: %v", err)
+		}
+		return nil
+	}
+
+	// Handle instruction platform selection
+	if strings.HasPrefix(data, "instr_") {
+		platform := strings.TrimPrefix(data, "instr_")
+		b.handleInstructionPlatform(chatID, userID, messageID, platform)
+		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+		}); err != nil {
+			b.logger.Errorf("Failed to answer instruction platform callback: %v", err)
+		}
+		return nil
+	}
+
 	// Default callback response
 	if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 		CallbackQueryID: query.ID,

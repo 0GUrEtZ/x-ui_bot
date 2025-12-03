@@ -9,9 +9,18 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	Panel    PanelConfig    `yaml:"panel"`
-	Telegram TelegramConfig `yaml:"telegram"`
-	Payment  PaymentConfig  `yaml:"payment"`
+	Panel        PanelConfig        `yaml:"panel"`
+	Telegram     TelegramConfig     `yaml:"telegram"`
+	Payment      PaymentConfig      `yaml:"payment"`
+	Instructions InstructionsConfig `yaml:"instructions"`
+}
+
+// InstructionsConfig holds URLs for setup instructions
+type InstructionsConfig struct {
+	IOS     string `yaml:"ios"`
+	MacOS   string `yaml:"macos"`
+	Android string `yaml:"android"`
+	Windows string `yaml:"windows"`
 }
 
 // PanelConfig holds 3x-ui panel configuration

@@ -266,7 +266,15 @@ func (b *Bot) handleRegistrationDecision(requestUserID int64, adminChatID int64,
 			limitDevicesText,
 			html.EscapeString(subLink),
 		)
-		b.sendMessage(req.UserID, userMsg)
+
+		// Add instructions button
+		keyboard := tu.InlineKeyboard(
+			tu.InlineKeyboardRow(
+				tu.InlineKeyboardButton("📖 Инструкции").WithCallbackData("instructions_menu"),
+			),
+		)
+
+		b.sendMessageWithInlineKeyboard(req.UserID, userMsg, keyboard)
 
 		// Show main menu to the user after successful registration
 		time.Sleep(1 * time.Second) // Small delay for better UX
