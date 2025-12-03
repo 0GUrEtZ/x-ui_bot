@@ -75,7 +75,6 @@ telegram:
   admin_ids: [123456789]
   proxy: ""                    # SOCKS5 proxy (optional)
   api_server: ""               # Custom API endpoint (optional)
-  welcome_file: "URL"          # Welcome PDF URL
 
 panel:
   url: "http://host:port/path"
@@ -90,7 +89,6 @@ panel:
 payment:
   bank: "Bank Name"
   phone_number: "+1234567890"
-  instructions_url: "https://docs.example.com/payment"
   trial_days: 3                # Trial period duration (0 = disabled)
   prices:
     one_month: 300

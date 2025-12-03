@@ -128,8 +128,7 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 		limitDevicesText = fmt.Sprintf("\n📱 Лимит устройств: %d", int(limitIP))
 	}
 
-	// Get instructions
-	instructionsText := b.getInstructionsText()
+	// Instructions URL removed - confirmation text included in welcome message
 
 	msg := fmt.Sprintf(
 		"📱 <b>Моя подписка</b>\n\n"+
@@ -138,7 +137,7 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 			"%s%s\n\n"+
 			"%s\n\n"+
 			"🔗 <b>Ваша VPN конфигурация:</b>\n"+
-			"<blockquote expandable>%s</blockquote>%s",
+			"<blockquote expandable>%s</blockquote>",
 		html.EscapeString(email),
 		statusIcon,
 		statusText,
@@ -146,7 +145,6 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 		limitDevicesText,
 		trafficInfo,
 		html.EscapeString(subLink),
-		instructionsText,
 	)
 
 	b.sendMessage(chatID, msg)

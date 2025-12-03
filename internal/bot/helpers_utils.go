@@ -130,13 +130,7 @@ func (b *Bot) findClientByTgID(userID int64) (client map[string]string, inboundI
 	return nil, 0, "", fmt.Errorf("client not found for user ID %d", userID)
 }
 
-// getInstructionsText returns formatted instructions text if URL is configured
-func (b *Bot) getInstructionsText() string {
-	if b.config.Payment.InstructionsURL != "" {
-		return fmt.Sprintf("\n\n📖 <b>Инструкции по подключению:</b>\n%s", b.config.Payment.InstructionsURL)
-	}
-	return ""
-}
+// (instructions URL is removed - instructions are included in the welcome text)
 
 // createDurationKeyboard creates inline keyboard with duration options and prices
 // callbackPrefix should be "reg_duration" for registration or "extend_<userID>" for extension

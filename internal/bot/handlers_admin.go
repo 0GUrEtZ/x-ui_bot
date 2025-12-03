@@ -468,7 +468,6 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 	newExpiryFormatted := time.UnixMilli(newExpiry).Format("02.01.2006 15:04")
 
 	// Notify user
-	instructionsText := b.getInstructionsText()
 
 	// Get client info for device limit
 	clientInfo, err := b.apiClient.GetClientByTgID(userID)
@@ -486,7 +485,7 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 			"⏰ Истекает: %s\n"+
 			"📅 Осталось: %d дней %d часов%s\n\n"+
 			"🔗 <b>Ваша VPN конфигурация:</b>\n"+
-			"<blockquote expandable>%s</blockquote>%s",
+			"<blockquote expandable>%s</blockquote>",
 		html.EscapeString(email),
 		duration,
 		newExpiryFormatted,
@@ -494,7 +493,6 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 		hoursUntilExpiry,
 		limitDevicesText,
 		html.EscapeString(subLink),
-		instructionsText,
 	)
 	b.sendMessage(userID, userMsg)
 

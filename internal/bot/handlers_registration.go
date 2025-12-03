@@ -248,7 +248,6 @@ func (b *Bot) handleRegistrationDecision(requestUserID int64, adminChatID int64,
 		}
 
 		// Notify user with subscription link
-		instructionsText := b.getInstructionsText()
 
 		limitDevicesText := ""
 		if b.config.Panel.LimitIP > 0 {
@@ -261,12 +260,11 @@ func (b *Bot) handleRegistrationDecision(requestUserID int64, adminChatID int64,
 				"📅 Срок: %d дней%s\n\n"+
 				"🔗 <b>Ваша VPN конфигурация:</b>\n"+
 				"<blockquote expandable>%s</blockquote>\n\n"+
-				"Скопируйте эту ссылку и добавьте её в ваше VPN приложение.%s",
+				"Скопируйте эту ссылку и добавьте её в ваше VPN приложение.",
 			html.EscapeString(req.Email),
 			req.Duration,
 			limitDevicesText,
 			html.EscapeString(subLink),
-			instructionsText,
 		)
 		b.sendMessage(req.UserID, userMsg)
 

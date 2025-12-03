@@ -30,20 +30,18 @@ type PanelConfig struct {
 
 // TelegramConfig holds Telegram bot configuration
 type TelegramConfig struct {
-	Token       string  `yaml:"token"`
-	AdminIDs    []int64 `yaml:"admin_ids"`
-	Proxy       string  `yaml:"proxy"`
-	APIServer   string  `yaml:"api_server"`
-	WelcomeFile string  `yaml:"welcome_file"` // URL to welcome PDF file
+	Token     string  `yaml:"token"`
+	AdminIDs  []int64 `yaml:"admin_ids"`
+	Proxy     string  `yaml:"proxy"`
+	APIServer string  `yaml:"api_server"`
 }
 
 // PaymentConfig holds payment information
 type PaymentConfig struct {
-	Bank            string       `yaml:"bank"`
-	PhoneNumber     string       `yaml:"phone_number"`
-	InstructionsURL string       `yaml:"instructions_url"`
-	TrialDays       int          `yaml:"trial_days"`
-	Prices          PricesConfig `yaml:"prices"`
+	Bank        string       `yaml:"bank"`
+	PhoneNumber string       `yaml:"phone_number"`
+	TrialDays   int          `yaml:"trial_days"`
+	Prices      PricesConfig `yaml:"prices"`
 }
 
 // PricesConfig holds prices for different subscription periods
