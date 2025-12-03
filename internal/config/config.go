@@ -13,6 +13,7 @@ type Config struct {
 	Telegram     TelegramConfig     `yaml:"telegram"`
 	Payment      PaymentConfig      `yaml:"payment"`
 	Instructions InstructionsConfig `yaml:"instructions"`
+	RateLimit    RateLimitConfig    `yaml:"rate_limit"`
 }
 
 // InstructionsConfig holds URLs for setup instructions
@@ -21,6 +22,12 @@ type InstructionsConfig struct {
 	MacOS   string `yaml:"macos"`
 	Android string `yaml:"android"`
 	Windows string `yaml:"windows"`
+}
+
+// RateLimitConfig holds rate limiting configuration
+type RateLimitConfig struct {
+	MaxRequestsPerMinute int `yaml:"max_requests_per_minute"`
+	WindowSeconds        int `yaml:"window_seconds"`
 }
 
 // PanelConfig holds 3x-ui panel configuration

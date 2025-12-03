@@ -32,3 +32,7 @@ instructions:
   macos: "https://telegra.ph/macos-instructions"
   android: "https://telegra.ph/android-instructions"
   windows: "https://telegra.ph/windows-instructions"
+
+rate_limit:
+  max_requests_per_minute: 10  # Maximum requests per user in the window
+  window_seconds: 60  # Time window in seconds

@@ -7,12 +7,6 @@ import (
 	"x-ui-bot/internal/errors"
 )
 
-const (
-	// RateLimit configuration
-	MaxRequestsPerMinute = 10
-	RateLimitWindow      = time.Minute
-)
-
 // RateLimitEntry represents rate limit tracking for a user
 type RateLimitEntry struct {
 	count     int
@@ -21,14 +15,26 @@ type RateLimitEntry struct {
 
 // RateLimiter handles rate limiting
 type RateLimiter struct {
-	limits map[int64]*RateLimitEntry
-	mu     sync.Mutex
+	limits               map[int64]*RateLimitEntry
+	mu                   sync.Mutex
+	maxRequestsPerMinute int
+	window               time.Duration
 }
 
 // NewRateLimiter creates a new rate limiter
-func NewRateLimiter() *RateLimiter {
+func NewRateLimiter(maxRequests int, windowSeconds int) *RateLimiter {
+	// Default values if not configured
+	if maxRequests <= 0 {
+		maxRequests = 10
+	}
+	if windowSeconds <= 0 {
+		windowSeconds = 60
+	}
+
 	return &RateLimiter{
-		limits: make(map[int64]*RateLimitEntry),
+		limits:               make(map[int64]*RateLimitEntry),
+		maxRequestsPerMinute: maxRequests,
+		window:               time.Duration(windowSeconds) * time.Second,
 	}
 }
 
@@ -43,12 +49,12 @@ func (r *RateLimiter) Check(userID int64) error {
 	if !exists || now.After(entry.resetTime) {
 		r.limits[userID] = &RateLimitEntry{
 			count:     1,
-			resetTime: now.Add(RateLimitWindow),
+			resetTime: now.Add(r.window),
 		}
 		return nil
 	}
 
-	if entry.count >= MaxRequestsPerMinute {
+	if entry.count >= r.maxRequestsPerMinute {
 		return errors.RateLimitExceeded("too many requests")
 	}
 

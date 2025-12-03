@@ -85,7 +85,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bo
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg)
-	rateLimiter := middleware.NewRateLimiter()
+	rateLimiter := middleware.NewRateLimiter(cfg.RateLimit.MaxRequestsPerMinute, cfg.RateLimit.WindowSeconds)
 
 	return &Bot{
 		config:              cfg,

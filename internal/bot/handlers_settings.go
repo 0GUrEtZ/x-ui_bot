@@ -289,10 +289,12 @@ func (b *Bot) handleInstructionsMenu(chatID int64, messageID int) {
 func (b *Bot) handleInstructionPlatform(chatID int64, userID int64, messageID int, platform string) {
 	if platform == "back" {
 		// Delete the instructions message
-		b.bot.DeleteMessage(context.Background(), &telego.DeleteMessageParams{
+		if err := b.bot.DeleteMessage(context.Background(), &telego.DeleteMessageParams{
 			ChatID:    telego.ChatID{ID: chatID},
 			MessageID: messageID,
-		})
+		}); err != nil {
+			b.logger.Errorf("Failed to delete instructions message: %v", err)
+		}
 
 		// Show subscription info again
 		b.handleMySubscription(chatID, userID)
