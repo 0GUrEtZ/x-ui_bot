@@ -249,6 +249,29 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		return nil
 	}
 
+	// Handle instructions menu (before block check - available to all users)
+	if data == "instructions_menu" {
+		b.handleInstructionsMenu(chatID, messageID)
+		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+		}); err != nil {
+			b.logger.Errorf("Failed to answer instructions menu callback: %v", err)
+		}
+		return nil
+	}
+
+	// Handle instruction platform selection (before block check - available to all users)
+	if strings.HasPrefix(data, "instr_") {
+		platform := strings.TrimPrefix(data, "instr_")
+		b.handleInstructionPlatform(chatID, userID, messageID, platform)
+		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+		}); err != nil {
+			b.logger.Errorf("Failed to answer instruction platform callback: %v", err)
+		}
+		return nil
+	}
+
 	// Check if client is blocked — block all non-admin callbacks
 	if !isAdmin {
 		if b.isClientBlocked(userID) {
@@ -651,29 +674,6 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	// Handle forecast_inbound_X callbacks
 	if strings.HasPrefix(data, "forecast_inbound_") {
 		b.handleForecastInboundCallback(chatID, query.ID, data)
-		return nil
-	}
-
-	// Handle instructions menu
-	if data == "instructions_menu" {
-		b.handleInstructionsMenu(chatID, messageID)
-		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
-			CallbackQueryID: query.ID,
-		}); err != nil {
-			b.logger.Errorf("Failed to answer instructions menu callback: %v", err)
-		}
-		return nil
-	}
-
-	// Handle instruction platform selection
-	if strings.HasPrefix(data, "instr_") {
-		platform := strings.TrimPrefix(data, "instr_")
-		b.handleInstructionPlatform(chatID, userID, messageID, platform)
-		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
-			CallbackQueryID: query.ID,
-		}); err != nil {
-			b.logger.Errorf("Failed to answer instruction platform callback: %v", err)
-		}
 		return nil
 	}
 
