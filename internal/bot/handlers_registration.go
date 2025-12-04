@@ -139,13 +139,17 @@ func (b *Bot) handleRegistrationDuration(userID int64, chatID int64, duration in
 
 	var paymentMsg string
 	if isTrial {
+		trialText := b.config.Payment.TrialText
+		if trialText == "" {
+			trialText = fmt.Sprintf("%d дня", duration)
+		}
 		paymentMsg = fmt.Sprintf(
 			"✅ Заявка на пробный период отправлена!\n\n"+
-				"🎁 <b>Пробный период: %d дня БЕСПЛАТНО</b>\n\n"+
+				"🎁 <b>Пробный период: %s БЕСПЛАТНО</b>\n\n"+
 				"⏳ Ожидайте подтверждения от администратора.\n\n"+
-				"<i>Оплата не требуется. После активации вы получите доступ к VPN на %d дня.</i>",
-			duration,
-			duration,
+				"<i>Оплата не требуется. После активации вы получите доступ к VPN на %s.</i>",
+			trialText,
+			trialText,
 		)
 	} else {
 		paymentMsg = fmt.Sprintf(

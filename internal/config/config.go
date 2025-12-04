@@ -57,6 +57,7 @@ type PaymentConfig struct {
 	Bank        string       `yaml:"bank"`
 	PhoneNumber string       `yaml:"phone_number"`
 	TrialDays   int          `yaml:"trial_days"`
+	TrialText   string       `yaml:"trial_text"`
 	Prices      PricesConfig `yaml:"prices"`
 }
 

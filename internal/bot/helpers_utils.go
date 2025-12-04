@@ -155,8 +155,12 @@ func (b *Bot) createDurationKeyboard(callbackPrefix string, isFirstPurchase bool
 
 	// Add trial option only for first purchase if enabled
 	if isFirstPurchase && b.config.Payment.TrialDays > 0 {
+		trialText := b.config.Payment.TrialText
+		if trialText == "" {
+			trialText = fmt.Sprintf("%d дня", b.config.Payment.TrialDays)
+		}
 		rows = append(rows, tu.InlineKeyboardRow(
-			tu.InlineKeyboardButton(fmt.Sprintf("Пробный период %d дня - Бесплатно", b.config.Payment.TrialDays)).WithCallbackData(fmt.Sprintf("%s_%d", callbackPrefix, b.config.Payment.TrialDays)),
+			tu.InlineKeyboardButton(fmt.Sprintf("Пробный период %s - Бесплатно", trialText)).WithCallbackData(fmt.Sprintf("%s_%d", callbackPrefix, b.config.Payment.TrialDays)),
 		))
 	}
 
