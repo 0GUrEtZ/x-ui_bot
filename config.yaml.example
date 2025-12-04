@@ -22,6 +22,7 @@ payment:
   phone_number: "+79001234567"
   trial_days: 3  # Number of days for trial subscription (0 = disabled)
   trial_text: "3 дня"  # Text for trial period button (e.g., "3 дня", "неделю")
+  auto_approve_trial: false  # Automatically approve trial subscriptions (true/false)
   prices:
     one_month: 300
     three_month: 800

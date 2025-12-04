@@ -115,12 +115,32 @@ func (b *Bot) handleRegistrationDuration(userID int64, chatID int64, duration in
 		b.logger.Errorf("Failed to delete user state: %v", err)
 	}
 
-	// Send request to admins
-	b.sendRegistrationRequestToAdmins(req)
-
 	// Determine price based on duration
 	var price int
 	isTrial := (duration == b.config.Payment.TrialDays && b.config.Payment.TrialDays > 0)
+
+	// Check if trial auto-approval is enabled
+	if isTrial && b.config.Payment.AutoApproveTrial {
+		// Auto-approve trial subscription
+		b.logger.Infof("Auto-approving trial subscription for user %d", userID)
+		go b.autoApproveRegistration(req)
+
+		// Show pending message to user
+		trialText := b.config.Payment.TrialText
+		if trialText == "" {
+			trialText = fmt.Sprintf("%d дня", duration)
+		}
+		b.sendMessage(chatID, fmt.Sprintf(
+			"✅ Заявка на пробный период принята!\n\n"+
+				"🎁 <b>Пробный период: %s БЕСПЛАТНО</b>\n\n"+
+				"⏳ Настройка аккаунта... Вы получите данные для подключения через несколько секунд.",
+			trialText,
+		))
+		return
+	}
+
+	// Send request to admins
+	b.sendRegistrationRequestToAdmins(req)
 
 	if isTrial {
 		price = 0
@@ -222,6 +242,102 @@ func (b *Bot) sendRegistrationRequestToAdmins(req *RegistrationRequest) {
 			b.logger.Infof("Sent registration request to admin %d", adminID)
 		}
 	}
+}
+
+// autoApproveRegistration automatically approves a trial registration
+func (b *Bot) autoApproveRegistration(req *RegistrationRequest) {
+	// Small delay to ensure state is saved
+	time.Sleep(500 * time.Millisecond)
+
+	// Create client via API
+	err := b.createClientForRequest(req)
+	if err != nil {
+		b.sendMessage(req.UserID, fmt.Sprintf("❌ Ошибка при создании аккаунта: %v\n\nОбратитесь к администратору.", err))
+		b.logger.Errorf("Failed to auto-create client for request: %v", err)
+
+		// Notify admins about the error
+		for _, adminID := range b.config.Telegram.AdminIDs {
+			b.sendMessage(adminID, fmt.Sprintf("⚠️ Ошибка автоматического создания пробного аккаунта для пользователя %s (ID: %d): %v", req.Username, req.UserID, err))
+		}
+		return
+	}
+
+	req.Status = "approved"
+
+	// Get subscription link
+	subLink, err := b.apiClient.GetClientLink(req.Email)
+	if err != nil {
+		b.logger.Warnf("Failed to get subscription link: %v", err)
+		subLink = "Не удалось получить ссылку. Обратитесь к администратору."
+	}
+
+	// Notify user with subscription link
+	limitDevicesText := ""
+	if b.config.Panel.LimitIP > 0 {
+		limitDevicesText = fmt.Sprintf("\n📱 Лимит устройств: %d", b.config.Panel.LimitIP)
+	}
+
+	userMsg := fmt.Sprintf(
+		"✅ <b>Ваш пробный аккаунт активирован!</b>\n\n"+
+			"👤 Аккаунт: %s\n"+
+			"📅 Срок: %d дней%s\n\n"+
+			"🔗 <b>Ваша VPN конфигурация:</b>\n"+
+			"<blockquote expandable>%s</blockquote>\n\n"+
+			"Скопируйте эту ссылку и добавьте её в ваше VPN приложение.",
+		html.EscapeString(req.Email),
+		req.Duration,
+		limitDevicesText,
+		html.EscapeString(subLink),
+	)
+
+	// Add instructions button
+	keyboard := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("📖 Инструкции").WithCallbackData("instructions_menu"),
+		),
+	)
+
+	b.sendMessageWithInlineKeyboard(req.UserID, userMsg, keyboard)
+
+	// Show main menu to the user after successful registration
+	time.Sleep(1 * time.Second)
+	b.handleStart(req.UserID, req.Username, false)
+
+	// Notify admins about auto-approval
+	trialText := b.config.Payment.TrialText
+	if trialText == "" {
+		trialText = fmt.Sprintf("%d дня", req.Duration)
+	}
+
+	tgUsernameStr := ""
+	if req.TgUsername != "" {
+		tgUsernameStr = fmt.Sprintf(" (@%s)", req.TgUsername)
+	}
+
+	adminMsg := fmt.Sprintf(
+		"✅ <b>Пробный аккаунт автоматически создан</b>\n\n"+
+			"👤 Пользователь: %s%s\n"+
+			"👤 Username: %s\n"+
+			"📅 Срок: %s",
+		html.EscapeString(req.Username),
+		tgUsernameStr,
+		html.EscapeString(req.Email),
+		trialText,
+	)
+
+	for _, adminID := range b.config.Telegram.AdminIDs {
+		b.sendMessage(adminID, adminMsg)
+	}
+
+	// Clean up
+	if err := b.deleteRegistrationRequest(req.UserID); err != nil {
+		b.logger.Errorf("Failed to delete registration request: %v", err)
+	}
+	if err := b.deleteUserState(req.UserID); err != nil {
+		b.logger.Errorf("Failed to delete user state: %v", err)
+	}
+
+	b.logger.Infof("Auto-approved trial registration for user %d, email: %s", req.UserID, req.Email)
 }
 
 // handleRegistrationDecision handles admin's approval or rejection
