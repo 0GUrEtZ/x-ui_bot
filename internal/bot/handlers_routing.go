@@ -15,6 +15,41 @@ import (
 	tu "github.com/mymmrac/telego/telegoutil"
 )
 
+// handleMediaMessage handles media messages (photos, videos, documents, etc.)
+func (b *Bot) handleMediaMessage(ctx *th.Context, message telego.Message) error {
+	chatID := message.Chat.ID
+	userID := message.From.ID
+	isAdmin := b.authMiddleware.IsAdmin(userID)
+
+	b.logger.Infof("Media message from user ID: %d", userID)
+
+	// Check rate limit (admins bypass automatically)
+	if !isAdmin {
+		if err := b.rateLimiter.Check(userID); err != nil {
+			b.logger.Warnf("Rate limit exceeded for user ID: %d", userID)
+			return nil
+		}
+	}
+
+	// Check if client is blocked
+	if !isAdmin {
+		if b.isClientBlocked(userID) {
+			b.sendMessage(chatID, "🔒 Ваш доступ заблокирован администратором.\n\nДля получения информации свяжитесь с администратором.")
+			return nil
+		}
+	}
+
+	// Check if user is waiting for message to send to admin
+	if state, exists := b.getUserState(chatID); exists {
+		if state == "awaiting_user_message" {
+			b.handleUserMediaSend(chatID, userID, &message, message.From)
+			return nil
+		}
+	}
+
+	return nil
+}
+
 // handleCommand handles incoming commands
 func (b *Bot) handleCommand(ctx *th.Context, message telego.Message) error {
 	chatID := message.Chat.ID
@@ -108,6 +143,11 @@ func (b *Bot) handleCommand(ctx *th.Context, message telego.Message) error {
 
 // handleTextMessage handles text messages from keyboard buttons
 func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
+	// Handle media messages
+	if message.Photo != nil || message.Video != nil || message.Document != nil || message.Audio != nil || message.Voice != nil {
+		return b.handleMediaMessage(ctx, message)
+	}
+
 	// Skip if it's a command
 	if strings.HasPrefix(message.Text, "/") {
 		return nil

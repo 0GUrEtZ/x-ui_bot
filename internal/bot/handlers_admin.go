@@ -669,3 +669,113 @@ func (b *Bot) handleTrafficForecastInbound(chatID int64, inboundID int) {
 	msg := b.forecastService.FormatForecastMessage(forecast)
 	b.sendMessage(chatID, msg)
 }
+
+// handleUserMediaSend handles sending media from user to admins
+func (b *Bot) handleUserMediaSend(chatID int64, userID int64, message *telego.Message, from *telego.User) {
+	state, exists := b.getUserMessageState(chatID)
+	if !exists {
+		b.sendMessage(chatID, "❌ Ошибка: состояние не найдено")
+		if err := b.deleteUserState(chatID); err != nil {
+			b.logger.Errorf("Failed to delete user state: %v", err)
+		}
+		return
+	}
+
+	// Get username from message if not in state
+	tgUsername := ""
+	if from.Username != "" {
+		tgUsername = "@" + from.Username
+	}
+	userName := state.Username
+	if userName == "" {
+		userName = from.FirstName
+	}
+
+	caption := fmt.Sprintf(
+		"📨 <b>Медиа от пользователя:</b>\n\n"+
+			"👤 %s %s\n"+
+			"🆔 ID: %d",
+		userName,
+		tgUsername,
+		userID,
+	)
+
+	// Add message text if present
+	if message.Caption != "" {
+		caption += fmt.Sprintf("\n\n💬 <i>%s</i>", html.EscapeString(message.Caption))
+	}
+
+	keyboard := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("💬 Ответить").WithCallbackData(fmt.Sprintf("reply_%d", userID)),
+		),
+	)
+
+	// Send media to all admins
+	for _, adminID := range b.config.Telegram.AdminIDs {
+		// Forward or send the media with caption
+		if len(message.Photo) > 0 {
+			// Get the largest photo
+			photo := message.Photo[len(message.Photo)-1]
+			if _, err := b.bot.SendPhoto(context.Background(), &telego.SendPhotoParams{
+				ChatID:      tu.ID(adminID),
+				Photo:       tu.FileFromID(photo.FileID),
+				Caption:     caption,
+				ParseMode:   telego.ModeHTML,
+				ReplyMarkup: keyboard,
+			}); err != nil {
+				b.logger.Errorf("Failed to send photo to admin %d: %v", adminID, err)
+			}
+		} else if message.Video != nil {
+			if _, err := b.bot.SendVideo(context.Background(), &telego.SendVideoParams{
+				ChatID:      tu.ID(adminID),
+				Video:       tu.FileFromID(message.Video.FileID),
+				Caption:     caption,
+				ParseMode:   telego.ModeHTML,
+				ReplyMarkup: keyboard,
+			}); err != nil {
+				b.logger.Errorf("Failed to send video to admin %d: %v", adminID, err)
+			}
+		} else if message.Document != nil {
+			if _, err := b.bot.SendDocument(context.Background(), &telego.SendDocumentParams{
+				ChatID:      tu.ID(adminID),
+				Document:    tu.FileFromID(message.Document.FileID),
+				Caption:     caption,
+				ParseMode:   telego.ModeHTML,
+				ReplyMarkup: keyboard,
+			}); err != nil {
+				b.logger.Errorf("Failed to send document to admin %d: %v", adminID, err)
+			}
+		} else if message.Audio != nil {
+			if _, err := b.bot.SendAudio(context.Background(), &telego.SendAudioParams{
+				ChatID:      tu.ID(adminID),
+				Audio:       tu.FileFromID(message.Audio.FileID),
+				Caption:     caption,
+				ParseMode:   telego.ModeHTML,
+				ReplyMarkup: keyboard,
+			}); err != nil {
+				b.logger.Errorf("Failed to send audio to admin %d: %v", adminID, err)
+			}
+		} else if message.Voice != nil {
+			if _, err := b.bot.SendVoice(context.Background(), &telego.SendVoiceParams{
+				ChatID:      tu.ID(adminID),
+				Voice:       tu.FileFromID(message.Voice.FileID),
+				Caption:     caption,
+				ParseMode:   telego.ModeHTML,
+				ReplyMarkup: keyboard,
+			}); err != nil {
+				b.logger.Errorf("Failed to send voice to admin %d: %v", adminID, err)
+			}
+		}
+	}
+
+	b.sendMessage(chatID, "✅ Ваше медиа отправлено администратору")
+
+	// Clear state
+	if err := b.deleteUserState(chatID); err != nil {
+		b.logger.Errorf("Failed to delete user state: %v", err)
+	}
+	if err := b.deleteUserMessageState(chatID); err != nil {
+		b.logger.Errorf("Failed to delete user message state: %v", err)
+	}
+}
