@@ -28,7 +28,7 @@ func BuildUserKeyboard(hasExpiry bool) *telego.ReplyKeyboardMarkup {
 		// Limited subscription - show extend button
 		return tu.Keyboard(
 			tu.KeyboardRow(
-				tu.KeyboardButton("📱 Моя подписка"),
+				tu.KeyboardButton("📱 Моя подписка и инструкции"),
 				tu.KeyboardButton("⏰ Продлить подписку"),
 			),
 			tu.KeyboardRow(
@@ -41,7 +41,7 @@ func BuildUserKeyboard(hasExpiry bool) *telego.ReplyKeyboardMarkup {
 	// Unlimited subscription - no extend button
 	return tu.Keyboard(
 		tu.KeyboardRow(
-			tu.KeyboardButton("📱 Моя подписка"),
+			tu.KeyboardButton("📱 Моя подписка и инструкции"),
 			tu.KeyboardButton("⚙️ Настройки"),
 		),
 		tu.KeyboardRow(

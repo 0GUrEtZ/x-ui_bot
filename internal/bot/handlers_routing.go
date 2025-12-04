@@ -197,7 +197,7 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 		// Handle buttons with emoji (encoding issues)
 		if strings.Contains(message.Text, "Ознакомиться с условиями") {
 			b.handleShowTerms(chatID, userID)
-		} else if strings.Contains(message.Text, "Моя подписка") {
+		} else if strings.Contains(message.Text, "Моя подписка") || strings.Contains(message.Text, "инструкции") {
 			b.handleMySubscription(chatID, userID)
 		} else if strings.Contains(message.Text, "Продлить подписку") {
 			b.handleExtendSubscription(chatID, userID)

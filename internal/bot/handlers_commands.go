@@ -109,7 +109,7 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 				// Unlimited subscription - no extend button
 				keyboard = tu.Keyboard(
 					tu.KeyboardRow(
-						tu.KeyboardButton("📱 Моя подписка"),
+						tu.KeyboardButton("📱 Моя подписка и инструкции"),
 						tu.KeyboardButton("⚙️ Настройки"),
 					),
 					tu.KeyboardRow(
@@ -120,7 +120,7 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 				// Limited subscription - show extend button
 				keyboard = tu.Keyboard(
 					tu.KeyboardRow(
-						tu.KeyboardButton("📱 Моя подписка"),
+						tu.KeyboardButton("📱 Моя подписка и инструкции"),
 						tu.KeyboardButton("⏰ Продлить подписку"),
 					),
 					tu.KeyboardRow(
