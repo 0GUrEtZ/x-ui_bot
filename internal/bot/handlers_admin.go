@@ -97,7 +97,7 @@ func (b *Bot) handleAdminMediaSend(adminChatID int64, message *telego.Message) {
 		return
 	}
 
-	caption := "📨 <b>Медиа от администратора:</b>"
+	caption := "📨 <b>Сообщение от администратора:</b>"
 	if message.Caption != "" {
 		caption += fmt.Sprintf("\n\n%s", message.Caption)
 	}
@@ -123,9 +123,9 @@ func (b *Bot) handleAdminMediaSend(adminChatID int64, message *telego.Message) {
 			ParseMode:   telego.ModeHTML,
 			ReplyMarkup: keyboard,
 		}); err != nil {
-			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить медиа клиенту %s: %v", state.ClientEmail, err))
+			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить сообщение клиенту %s: %v", state.ClientEmail, err))
 		} else {
-			b.sendMessage(adminChatID, fmt.Sprintf("✅ Медиа отправлено клиенту %s", state.ClientEmail))
+			b.sendMessage(adminChatID, fmt.Sprintf("✅ Сообщение отправлено клиенту %s", state.ClientEmail))
 		}
 	} else if message.Video != nil {
 		if _, err := b.bot.SendVideo(context.Background(), &telego.SendVideoParams{
@@ -135,9 +135,9 @@ func (b *Bot) handleAdminMediaSend(adminChatID int64, message *telego.Message) {
 			ParseMode:   telego.ModeHTML,
 			ReplyMarkup: keyboard,
 		}); err != nil {
-			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить медиа клиенту %s: %v", state.ClientEmail, err))
+			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить сообщение клиенту %s: %v", state.ClientEmail, err))
 		} else {
-			b.sendMessage(adminChatID, fmt.Sprintf("✅ Медиа отправлено клиенту %s", state.ClientEmail))
+			b.sendMessage(adminChatID, fmt.Sprintf("✅ Сообщение отправлено клиенту %s", state.ClientEmail))
 		}
 	} else if message.Document != nil {
 		if _, err := b.bot.SendDocument(context.Background(), &telego.SendDocumentParams{
@@ -147,9 +147,9 @@ func (b *Bot) handleAdminMediaSend(adminChatID int64, message *telego.Message) {
 			ParseMode:   telego.ModeHTML,
 			ReplyMarkup: keyboard,
 		}); err != nil {
-			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить медиа клиенту %s: %v", state.ClientEmail, err))
+			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить сообщение клиенту %s: %v", state.ClientEmail, err))
 		} else {
-			b.sendMessage(adminChatID, fmt.Sprintf("✅ Медиа отправлено клиенту %s", state.ClientEmail))
+			b.sendMessage(adminChatID, fmt.Sprintf("✅ Сообщение отправлено клиенту %s", state.ClientEmail))
 		}
 	} else if message.Audio != nil {
 		if _, err := b.bot.SendAudio(context.Background(), &telego.SendAudioParams{
@@ -159,9 +159,9 @@ func (b *Bot) handleAdminMediaSend(adminChatID int64, message *telego.Message) {
 			ParseMode:   telego.ModeHTML,
 			ReplyMarkup: keyboard,
 		}); err != nil {
-			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить медиа клиенту %s: %v", state.ClientEmail, err))
+			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить сообщение клиенту %s: %v", state.ClientEmail, err))
 		} else {
-			b.sendMessage(adminChatID, fmt.Sprintf("✅ Медиа отправлено клиенту %s", state.ClientEmail))
+			b.sendMessage(adminChatID, fmt.Sprintf("✅ Сообщение отправлено клиенту %s", state.ClientEmail))
 		}
 	} else if message.Voice != nil {
 		if _, err := b.bot.SendVoice(context.Background(), &telego.SendVoiceParams{
@@ -171,9 +171,9 @@ func (b *Bot) handleAdminMediaSend(adminChatID int64, message *telego.Message) {
 			ParseMode:   telego.ModeHTML,
 			ReplyMarkup: keyboard,
 		}); err != nil {
-			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить медиа клиенту %s: %v", state.ClientEmail, err))
+			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить сообщение клиенту %s: %v", state.ClientEmail, err))
 		} else {
-			b.sendMessage(adminChatID, fmt.Sprintf("✅ Медиа отправлено клиенту %s", state.ClientEmail))
+			b.sendMessage(adminChatID, fmt.Sprintf("✅ Сообщение отправлено клиенту %s", state.ClientEmail))
 		}
 	}
 
@@ -805,7 +805,7 @@ func (b *Bot) handleUserMediaSend(chatID int64, userID int64, message *telego.Me
 	}
 
 	caption := fmt.Sprintf(
-		"📨 <b>Медиа от пользователя:</b>\n\n"+
+		"📨 <b>Сообщение от пользователя:</b>\n\n"+
 			"👤 %s %s\n"+
 			"🆔 ID: %d",
 		userName,
