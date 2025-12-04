@@ -45,6 +45,10 @@ func (b *Bot) handleMediaMessage(ctx *th.Context, message telego.Message) error 
 			b.handleUserMediaSend(chatID, userID, &message, message.From)
 			return nil
 		}
+		if state == "awaiting_admin_message" && isAdmin {
+			b.handleAdminMediaSend(chatID, &message)
+			return nil
+		}
 	}
 
 	return nil

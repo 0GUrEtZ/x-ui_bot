@@ -73,6 +73,119 @@ func (b *Bot) handleAdminMessageSend(adminChatID int64, messageText string) {
 	}
 }
 
+// handleAdminMediaSend handles sending media from admin to client
+func (b *Bot) handleAdminMediaSend(adminChatID int64, message *telego.Message) {
+	state, exists := b.getAdminMessageState(adminChatID)
+	if !exists {
+		b.sendMessage(adminChatID, "❌ Ошибка: состояние не найдено")
+		if err := b.deleteUserState(adminChatID); err != nil {
+			b.logger.Errorf("Failed to delete user state: %v", err)
+		}
+		return
+	}
+
+	// Parse client Telegram ID
+	clientTgID, err := strconv.ParseInt(state.ClientTgID, 10, 64)
+	if err != nil {
+		b.sendMessage(adminChatID, "❌ Ошибка: неверный Telegram ID клиента")
+		if err := b.deleteUserState(adminChatID); err != nil {
+			b.logger.Errorf("Failed to delete user state: %v", err)
+		}
+		if err := b.deleteAdminMessageState(adminChatID); err != nil {
+			b.logger.Errorf("Failed to delete admin message state: %v", err)
+		}
+		return
+	}
+
+	caption := "📨 <b>Медиа от администратора:</b>"
+	if message.Caption != "" {
+		caption += fmt.Sprintf("\n\n%s", message.Caption)
+	}
+
+	// Create reply button for user
+	replyButton := tu.InlineKeyboardButton("💬 Ответить").
+		WithCallbackData("contact_admin")
+
+	keyboard := &telego.InlineKeyboardMarkup{
+		InlineKeyboard: [][]telego.InlineKeyboardButton{
+			{replyButton},
+		},
+	}
+
+	// Send media to client
+	if len(message.Photo) > 0 {
+		// Get the largest photo
+		photo := message.Photo[len(message.Photo)-1]
+		if _, err := b.bot.SendPhoto(context.Background(), &telego.SendPhotoParams{
+			ChatID:      tu.ID(clientTgID),
+			Photo:       tu.FileFromID(photo.FileID),
+			Caption:     caption,
+			ParseMode:   telego.ModeHTML,
+			ReplyMarkup: keyboard,
+		}); err != nil {
+			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить медиа клиенту %s: %v", state.ClientEmail, err))
+		} else {
+			b.sendMessage(adminChatID, fmt.Sprintf("✅ Медиа отправлено клиенту %s", state.ClientEmail))
+		}
+	} else if message.Video != nil {
+		if _, err := b.bot.SendVideo(context.Background(), &telego.SendVideoParams{
+			ChatID:      tu.ID(clientTgID),
+			Video:       tu.FileFromID(message.Video.FileID),
+			Caption:     caption,
+			ParseMode:   telego.ModeHTML,
+			ReplyMarkup: keyboard,
+		}); err != nil {
+			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить медиа клиенту %s: %v", state.ClientEmail, err))
+		} else {
+			b.sendMessage(adminChatID, fmt.Sprintf("✅ Медиа отправлено клиенту %s", state.ClientEmail))
+		}
+	} else if message.Document != nil {
+		if _, err := b.bot.SendDocument(context.Background(), &telego.SendDocumentParams{
+			ChatID:      tu.ID(clientTgID),
+			Document:    tu.FileFromID(message.Document.FileID),
+			Caption:     caption,
+			ParseMode:   telego.ModeHTML,
+			ReplyMarkup: keyboard,
+		}); err != nil {
+			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить медиа клиенту %s: %v", state.ClientEmail, err))
+		} else {
+			b.sendMessage(adminChatID, fmt.Sprintf("✅ Медиа отправлено клиенту %s", state.ClientEmail))
+		}
+	} else if message.Audio != nil {
+		if _, err := b.bot.SendAudio(context.Background(), &telego.SendAudioParams{
+			ChatID:      tu.ID(clientTgID),
+			Audio:       tu.FileFromID(message.Audio.FileID),
+			Caption:     caption,
+			ParseMode:   telego.ModeHTML,
+			ReplyMarkup: keyboard,
+		}); err != nil {
+			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить медиа клиенту %s: %v", state.ClientEmail, err))
+		} else {
+			b.sendMessage(adminChatID, fmt.Sprintf("✅ Медиа отправлено клиенту %s", state.ClientEmail))
+		}
+	} else if message.Voice != nil {
+		if _, err := b.bot.SendVoice(context.Background(), &telego.SendVoiceParams{
+			ChatID:      tu.ID(clientTgID),
+			Voice:       tu.FileFromID(message.Voice.FileID),
+			Caption:     caption,
+			ParseMode:   telego.ModeHTML,
+			ReplyMarkup: keyboard,
+		}); err != nil {
+			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить медиа клиенту %s: %v", state.ClientEmail, err))
+		} else {
+			b.sendMessage(adminChatID, fmt.Sprintf("✅ Медиа отправлено клиенту %s", state.ClientEmail))
+		}
+	}
+
+	// Clear state
+	if err := b.deleteUserState(adminChatID); err != nil {
+		b.logger.Errorf("Failed to delete user state: %v", err)
+	}
+	if err := b.deleteAdminMessageState(adminChatID); err != nil {
+		b.logger.Errorf("Failed to delete admin message state: %v", err)
+	}
+}
+
 // handleContactAdmin initiates user messaging admin
 func (b *Bot) handleContactAdmin(chatID int64, userID int64) {
 	b.logger.Infof("User %d wants to contact admin", userID)
@@ -769,7 +882,7 @@ func (b *Bot) handleUserMediaSend(chatID int64, userID int64, message *telego.Me
 		}
 	}
 
-	b.sendMessage(chatID, "✅ Ваше медиа отправлено администратору")
+	b.sendMessage(chatID, "✅ Ваше сообщение отправлено администратору")
 
 	// Clear state
 	if err := b.deleteUserState(chatID); err != nil {
