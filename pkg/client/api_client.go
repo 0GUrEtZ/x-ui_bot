@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/skip2/go-qrcode"
 )
 
 // APIClient handles communication with 3x-ui panel API
@@ -753,6 +755,23 @@ func (c *APIClient) GetClientLink(ctx context.Context, email string) (string, er
 	// Use baseURL as fallback
 	subURL := fmt.Sprintf("%s%s%s", c.baseURL, subPath, clientSubID)
 	return subURL, nil
+}
+
+// GetClientQRCode generates a QR code image for the client's subscription link
+func (c *APIClient) GetClientQRCode(ctx context.Context, email string) ([]byte, error) {
+	// Get the subscription link
+	link, err := c.GetClientLink(ctx, email)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get subscription link: %w", err)
+	}
+
+	// Generate QR code
+	qrCode, err := qrcode.Encode(link, qrcode.Medium, 512)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate QR code: %w", err)
+	}
+
+	return qrCode, nil
 }
 
 // GetDatabaseBackup downloads x-ui database backup
