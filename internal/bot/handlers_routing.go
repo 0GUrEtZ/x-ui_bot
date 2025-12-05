@@ -315,6 +315,17 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		return nil
 	}
 
+	// Handle traffic details (before block check - available to all users)
+	if data == constants.CbTrafficDetails {
+		b.handleTrafficDetails(chatID, userID, messageID)
+		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+		}); err != nil {
+			b.logger.Errorf("Failed to answer traffic details callback: %v", err)
+		}
+		return nil
+	}
+
 	// Handle instructions menu (before block check - available to all users)
 	if data == constants.CbInstructionsMenu {
 		b.handleInstructionsMenu(chatID, messageID)
@@ -334,6 +345,32 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 			CallbackQueryID: query.ID,
 		}); err != nil {
 			b.logger.Errorf("Failed to answer instruction platform callback: %v", err)
+		}
+		return nil
+	}
+
+	// Handle back to subscription (before block check - available to all users)
+	if data == "back_to_subscription" {
+		// Re-send subscription info
+		clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), userID)
+		if err == nil {
+			if email, ok := clientInfo["email"].(string); ok {
+				// Delete old message and send new one with QR code
+				if err := b.bot.DeleteMessage(context.Background(), &telego.DeleteMessageParams{
+					ChatID:    tu.ID(chatID),
+					MessageID: messageID,
+				}); err != nil {
+					b.logger.Errorf("Failed to delete message: %v", err)
+				}
+				if err := b.sendSubscriptionInfo(chatID, userID, email, "📱 Моя подписка"); err != nil {
+					b.logger.Errorf("Failed to send subscription info: %v", err)
+				}
+			}
+		}
+		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+		}); err != nil {
+			b.logger.Errorf("Failed to answer back to subscription callback: %v", err)
 		}
 		return nil
 	}

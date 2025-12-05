@@ -30,6 +30,9 @@ const (
 	CbInstrWindows     = "windows"
 	CbInstrBack        = "back"
 
+	// Traffic Details
+	CbTrafficDetails = "traffic_details"
+
 	// Registration
 	CbRegDurationBase   = "reg_duration"
 	CbRegDurationPrefix = "reg_duration_"
