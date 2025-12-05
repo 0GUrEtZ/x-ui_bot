@@ -55,6 +55,7 @@ type Bot struct {
 	broadcastService    *services.BroadcastService
 	forecastService     *services.ForecastService
 	expiryNotifier      *services.ExpiryNotifierService
+	inboundSyncService  *services.InboundSyncService
 
 	// Middleware
 	authMiddleware *middleware.AuthMiddleware
@@ -88,6 +89,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bo
 	broadcastService := services.NewBroadcastService(apiClient, bot, log)
 	forecastService := services.NewForecastService(apiClient, store, bot, cfg, log)
 	expiryNotifier := services.NewExpiryNotifierService(bot, store, log, cfg.Notifications.ExpiryWarningDays)
+	inboundSyncService := services.NewInboundSyncService(apiClient, log, cfg.Panel.MultiInboundSync)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg)
@@ -105,6 +107,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bo
 		broadcastService:    broadcastService,
 		forecastService:     forecastService,
 		expiryNotifier:      expiryNotifier,
+		inboundSyncService:  inboundSyncService,
 		authMiddleware:      authMiddleware,
 		rateLimiter:         rateLimiter,
 		stopBackup:          make(chan struct{}),
@@ -153,13 +156,25 @@ func (b *Bot) Start() error {
 		go b.backupScheduler()
 	}
 
+	// Create shared context for all services
+	ctx, cancel := context.WithCancel(context.Background())
+	b.cancel = cancel
+
 	// Start expiry notifier
 	if len(b.config.Notifications.ExpiryWarningDays) > 0 {
-		ctx, cancel := context.WithCancel(context.Background())
-		b.cancel = cancel
 		go b.expiryNotifier.Start(ctx)
 		go b.subscriptionSyncScheduler(ctx)
 		b.logger.Info("Started expiry notifier and sync service")
+	}
+
+	// Start inbound sync scheduler if enabled
+	if b.config.Panel.MultiInboundSync {
+		syncHours := b.config.Panel.MultiInboundSyncHours
+		if syncHours <= 0 {
+			syncHours = 24 // Default to 24 hours
+		}
+		go b.inboundSyncService.Start(ctx, syncHours)
+		b.logger.Infof("Started multi-inbound sync service (interval: %d hours)", syncHours)
 	}
 
 	return nil
@@ -297,7 +312,53 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 		trafficLimitBytes = int64(b.config.Panel.TrafficLimitGB) * 1024 * 1024 * 1024
 	}
 
-	// Create client data based on protocol
+	// Check if multi-inbound mode is enabled for new users
+	if b.config.Panel.MultiInboundNewUsers {
+		// Create client in ALL inbounds
+		b.logger.Infof("Creating client %s in all inbounds (multi-inbound mode)", req.Email)
+		
+		successCount := 0
+		for _, inbound := range inbounds {
+			inboundID := int(inbound["id"].(float64))
+			protocol := ""
+			if p, ok := inbound["protocol"].(string); ok {
+				protocol = p
+			}
+
+			// Create client data with SAME subId for all inbounds
+			clientData := map[string]interface{}{
+				"email":      req.Email,
+				"enable":     true,
+				"expiryTime": expiryTime,
+				"totalGB":    trafficLimitBytes,
+				"tgId":       req.UserID,
+				"subId":      subID, // Same subId for unified subscription
+				"limitIp":    b.config.Panel.LimitIP,
+				"comment":    "",
+				"reset":      0,
+			}
+
+			// Add protocol-specific fields
+			b.addProtocolFields(clientData, protocol, inbound)
+
+			// Add client to this inbound
+			if err := b.apiClient.AddClient(context.Background(), inboundID, clientData); err != nil {
+				b.logger.Errorf("Failed to create client in inbound %d: %v", inboundID, err)
+			} else {
+				b.logger.Infof("Created client %s in inbound %d", req.Email, inboundID)
+				successCount++
+			}
+		}
+
+		if successCount == 0 {
+			return fmt.Errorf("failed to create client in any inbound")
+		}
+		
+		b.logger.Infof("Successfully created client %s in %d/%d inbounds", req.Email, successCount, len(inbounds))
+		return nil
+	}
+
+	// Single inbound mode (default) - create only in first inbound
 	clientData := map[string]interface{}{
 		"email":      req.Email,
 		"enable":     true,

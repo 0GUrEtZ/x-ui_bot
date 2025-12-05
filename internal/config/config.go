@@ -43,6 +43,10 @@ type PanelConfig struct {
 	// Traffic alert percentage (e.g., 90) — alert when predicted reaches this percent of threshold
 	TrafficAlertPercent int `yaml:"traffic_alert_percent"`
 	BackupDays          int `yaml:"backup_days"` // Backup interval in days (0 = disabled)
+	// Multi-inbound settings
+	MultiInboundNewUsers  bool `yaml:"multi_inbound_new_users"`  // Create new users in all inbounds
+	MultiInboundSync      bool `yaml:"multi_inbound_sync"`       // Periodically sync existing users to all inbounds
+	MultiInboundSyncHours int  `yaml:"multi_inbound_sync_hours"` // Sync interval in hours (default: 24)
 }
 
 // TelegramConfig holds Telegram bot configuration

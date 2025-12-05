@@ -16,6 +16,10 @@ panel:
   traffic_alert_threshold_gb: 0
   # Percent of the threshold at which to alert (e.g., 90 = 90%)
   traffic_alert_percent: 90
+  # Multi-inbound settings
+  multi_inbound_new_users: false   # Create new users in all inbounds immediately
+  multi_inbound_sync: false        # Periodically sync existing users to all inbounds  
+  multi_inbound_sync_hours: 24     # Sync check interval (hours)
 
 payment:
   bank: "Сбербанк"
