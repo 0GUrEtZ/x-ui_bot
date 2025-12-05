@@ -22,11 +22,23 @@ func (b *Bot) sendSubscriptionInfo(chatID int64, userID int64, email string, tit
 	// Strip suffix from email for display
 	cleanEmail := stripInboundSuffix(email)
 
-	// Get subscription link (using clean email as it works with subId)
-	subLink, err := b.apiClient.GetClientLink(context.Background(), cleanEmail)
+	// Get subscription link - try with the provided email first (which may include suffix)
+	// If that fails, search for any email of this user across inbounds
+	subLink, err := b.apiClient.GetClientLink(context.Background(), email)
 	if err != nil {
-		b.logger.Errorf("Failed to get subscription link: %v", err)
-		return fmt.Errorf("не удалось получить ссылку: %w", err)
+		// If the provided email doesn't work, search for user's email in inbounds
+		clientInfo, clientErr := b.apiClient.GetClientByTgID(context.Background(), userID)
+		if clientErr == nil {
+			// Try to get the link using the email from clientInfo
+			if emailFromClient, ok := clientInfo["email"].(string); ok && emailFromClient != "" {
+				subLink, err = b.apiClient.GetClientLink(context.Background(), emailFromClient)
+			}
+		}
+
+		if err != nil {
+			b.logger.Errorf("Failed to get subscription link: %v", err)
+			return fmt.Errorf("не удалось получить ссылку: %w", err)
+		}
 	}
 
 	// Get client info for detailed stats
