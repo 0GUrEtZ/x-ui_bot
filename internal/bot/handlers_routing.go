@@ -36,7 +36,7 @@ func (b *Bot) handleMediaMessage(_ *th.Context, message telego.Message) error {
 	// Check if client is blocked
 	if !isAdmin {
 		if b.isClientBlocked(userID) {
-			b.sendMessage(chatID, "🔒 Ваш доступ заблокирован администратором.\n\nДля получения информации свяжитесь с администратором.")
+			b.sendMessage(chatID, "🔒 Ваш доступ заблокирован")
 			return nil
 		}
 	}
@@ -77,7 +77,7 @@ func (b *Bot) handleCommand(ctx *th.Context, message telego.Message) error {
 	// Check if client is blocked (except for start, help, id commands and admins)
 	if !isAdmin && command != constants.CmdStart && command != constants.CmdHelp && command != constants.CmdID {
 		if b.isClientBlocked(userID) {
-			b.sendMessage(chatID, "🔒 Ваш доступ заблокирован администратором.\n\nДля получения информации свяжитесь с администратором.")
+			b.sendMessage(chatID, "🔒 Ваш доступ заблокирован")
 			return nil
 		}
 	}
@@ -184,10 +184,12 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 		return nil
 	}
 
-	// Check if client is blocked — block all non-admin actions (including chat)
+	// Check if client is blocked — block all non-admin actions (including chat and registration)
 	if !isAdmin {
 		if b.isClientBlocked(userID) {
-			b.sendMessage(chatID, "🔒 Ваш доступ заблокирован администратором.\n\nДля получения информации свяжитесь с администратором.")
+			b.sendMessage(chatID, "🔒 Ваш доступ заблокирован")
+			// Clear any pending states for blocked user
+			_ = b.deleteUserState(chatID)
 			return nil
 		}
 	}
@@ -277,8 +279,20 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 
 	b.logger.Infof("Callback from user %d: %s", userID, data)
 
-	// Handle terms acceptance/decline (before block check)
+	// Handle terms acceptance/decline
 	if data == constants.CbTermsAccept {
+		// Check if client is blocked before accepting terms
+		if !isAdmin && b.isClientBlocked(userID) {
+			if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+				CallbackQueryID: query.ID,
+				Text:            "🔒 Ваш доступ заблокирован",
+				ShowAlert:       true,
+			}); err != nil {
+				b.logger.Errorf("Failed to answer blocked user callback: %v", err)
+			}
+			return nil
+		}
+
 		b.handleTermsAccept(chatID, userID, messageID, &query.From)
 		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
