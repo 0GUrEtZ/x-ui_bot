@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -355,16 +354,25 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 
 		createdCount := 0
 		existedCount := 0
-		for _, inbound := range inbounds {
+		
+		for idx, inbound := range inbounds {
 			inboundID := int(inbound["id"].(float64))
 			protocol := ""
 			if p, ok := inbound["protocol"].(string); ok {
 				protocol = p
 			}
 
+			// Add unique suffix to email for non-first inbounds to avoid duplicate errors
+			// Format: email##ibN where N is inbound ID
+			// The ##ib marker allows us to strip it when displaying to users
+			emailForInbound := req.Email
+			if idx > 0 {
+				emailForInbound = fmt.Sprintf("%s##ib%d", req.Email, inboundID)
+			}
+
 			// Create client data with SAME subId for all inbounds
 			clientData := map[string]interface{}{
-				"email":      req.Email,
+				"email":      emailForInbound,
 				"enable":     true,
 				"expiryTime": expiryTime,
 				"totalGB":    trafficLimitBytes,
@@ -380,18 +388,9 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 
 			// Add client to this inbound
 			if err := b.apiClient.AddClient(context.Background(), inboundID, clientData); err != nil {
-				// Check if it's a duplicate email error - treat as success
-				errStr := err.Error()
-				b.logger.Infof("TEMP DEBUG: Processing error for inbound %d: '%s'", inboundID, errStr)
-				b.logger.Debugf("API error for inbound %d: %s", inboundID, errStr) // Debug log to see exact error
-				if strings.Contains(strings.ToLower(errStr), "duplicate") || strings.Contains(strings.ToLower(errStr), "already exists") || strings.Contains(errStr, "Duplicate email") {
-					b.logger.Infof("Client %s already exists in inbound %d (duplicate ignored)", req.Email, inboundID)
-					existedCount++
-				} else {
-					b.logger.Errorf("Failed to create client in inbound %d: %v", inboundID, err)
-				}
+				b.logger.Errorf("Failed to create client %s in inbound %d: %v", emailForInbound, inboundID, err)
 			} else {
-				b.logger.Infof("Created client %s in inbound %d", req.Email, inboundID)
+				b.logger.Infof("Created client %s in inbound %d", emailForInbound, inboundID)
 				createdCount++
 			}
 
@@ -425,6 +424,31 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 
 	// Add client via API
 	return b.apiClient.AddClient(context.Background(), inboundID, clientData)
+}
+
+// stripInboundSuffix removes the ##ibN suffix from email if present
+func stripInboundSuffix(email string) string {
+	if idx := findSubstring(email, "##ib"); idx >= 0 {
+		return email[:idx]
+	}
+	return email
+}
+
+// findSubstring returns the index of substr in s, or -1 if not found
+func findSubstring(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		match := true
+		for j := 0; j < len(substr); j++ {
+			if s[i+j] != substr[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
 }
 
 // subscriptionSyncScheduler periodically syncs subscription expiry data

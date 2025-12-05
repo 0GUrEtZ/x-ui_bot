@@ -10,6 +10,16 @@ import (
 	"x-ui-bot/pkg/client"
 )
 
+// stripInboundSuffix removes the ##ibN suffix from email if present
+func stripInboundSuffix(email string) string {
+	for i := 0; i <= len(email)-4; i++ {
+		if email[i:i+4] == "##ib" {
+			return email[:i]
+		}
+	}
+	return email
+}
+
 // UserClientInfo holds user client information
 type UserClientInfo struct {
 	TgID       int64
@@ -99,18 +109,30 @@ func (s *InboundSyncService) SyncUserInbounds() error {
 	errorCount := 0
 
 	for _, userInfo := range users {
+		// Track which inbounds already have this user
+		inboundsWithUser := make(map[int]bool)
+		
+		// First pass: find all inbounds where user exists
 		for _, inbound := range inbounds {
 			inboundID := int(inbound["id"].(float64))
-
-			// Check if user already exists in this inbound
 			if s.hasClientInInbound(userInfo.Email, inbound) {
+				inboundsWithUser[inboundID] = true
+			}
+		}
+
+		// Second pass: create in missing inbounds with appropriate email suffix
+		for idx, inbound := range inbounds {
+			inboundID := int(inbound["id"].(float64))
+
+			// Skip if already exists
+			if inboundsWithUser[inboundID] {
 				continue
 			}
 
 			// Create client in this inbound
 			s.logger.Infof("Creating client %s (tgID: %d) in inbound %d", userInfo.Email, userInfo.TgID, inboundID)
 
-			if err := s.createClientInInbound(userInfo, inbound); err != nil {
+			if err := s.createClientInInbound(userInfo, inbound, idx); err != nil {
 				s.logger.Errorf("Failed to create client %s in inbound %d: %v", userInfo.Email, inboundID, err)
 				errorCount++
 			} else {
@@ -143,9 +165,13 @@ func (s *InboundSyncService) collectAllUsers(inbounds []map[string]interface{}) 
 
 			// Only add if not already present (use first occurrence)
 			if _, exists := users[tgID]; !exists {
+				// Strip ##ibN suffix from email
+				email := s.extractString(clientData, "email")
+				cleanEmail := stripInboundSuffix(email)
+				
 				users[tgID] = &UserClientInfo{
 					TgID:       tgID,
-					Email:      s.extractString(clientData, "email"),
+					Email:      cleanEmail, // Use clean email without suffix
 					SubID:      s.extractString(clientData, "subId"),
 					ExpiryTime: s.extractInt64(clientData, "expiryTime"),
 					TotalGB:    s.extractInt64(clientData, "totalGB"),
@@ -206,16 +232,23 @@ func (s *InboundSyncService) hasClientInInbound(email string, inbound map[string
 }
 
 // createClientInInbound creates a client in the specified inbound
-func (s *InboundSyncService) createClientInInbound(userInfo *UserClientInfo, inbound map[string]interface{}) error {
+func (s *InboundSyncService) createClientInInbound(userInfo *UserClientInfo, inbound map[string]interface{}, inboundIndex int) error {
 	inboundID := int(inbound["id"].(float64))
 	protocol := ""
 	if p, ok := inbound["protocol"].(string); ok {
 		protocol = p
 	}
 
+	// Add unique suffix to email for non-first inbounds to avoid duplicate errors
+	// Format: email##ibN where N is inbound ID
+	emailForInbound := userInfo.Email
+	if inboundIndex > 0 {
+		emailForInbound = fmt.Sprintf("%s##ib%d", userInfo.Email, inboundID)
+	}
+
 	// Build client data with same parameters
 	clientData := map[string]interface{}{
-		"email":      userInfo.Email,
+		"email":      emailForInbound,
 		"enable":     userInfo.Enable,
 		"expiryTime": userInfo.ExpiryTime,
 		"totalGB":    userInfo.TotalGB,

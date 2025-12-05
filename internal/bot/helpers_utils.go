@@ -122,7 +122,9 @@ func (b *Bot) findClientByTgID(userID int64) (client map[string]string, inboundI
 
 		for _, c := range clients {
 			if c["tgId"] == fmt.Sprintf("%d", userID) {
-				return c, id, c["email"], nil
+				// Strip ##ibN suffix from email for display
+				cleanEmail := stripInboundSuffix(c["email"])
+				return c, id, cleanEmail, nil
 			}
 		}
 	}
