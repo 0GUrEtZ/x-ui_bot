@@ -311,47 +311,84 @@ func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
 		return
 	}
 
-	// Find client by tgId
-	foundClient, inboundID, oldEmail, err := b.findClientByTgID(userID)
+	// Get all inbounds to update username across all of them
+	inbounds, err := b.apiClient.GetInbounds(context.Background())
 	if err != nil {
-		b.sendMessage(chatID, "❌ Ошибка: клиент не найден")
+		b.sendMessage(chatID, "❌ Ошибка получения inbounds")
 		if err := b.deleteUserState(chatID); err != nil {
 			b.logger.Errorf("Failed to delete user state: %v", err)
 		}
 		return
 	}
 
-	// Parse raw JSON and update email field
-	rawJSON := foundClient["_raw_json"]
-	var clientData map[string]interface{}
-	if err := json.Unmarshal([]byte(rawJSON), &clientData); err != nil {
-		b.sendMessage(chatID, "❌ Ошибка при обработке данных клиента")
-		b.logger.Errorf("Failed to parse client JSON: %v", err)
+	// Find all clients with this tgId and update them
+	updatedCount := 0
+	oldEmailClean := ""
+
+	for idx, inbound := range inbounds {
+		inboundID := int(inbound["id"].(float64))
+		settingsStr := ""
+		if settings, ok := inbound["settings"].(string); ok {
+			settingsStr = settings
+		}
+
+		clients, err := b.clientService.ParseClients(settingsStr)
+		if err != nil {
+			b.logger.Errorf("Failed to parse clients for inbound %d: %v", inboundID, err)
+			continue
+		}
+
+		// Find client with matching tgId
+		for _, client := range clients {
+			if client["tgId"] == fmt.Sprintf("%d", userID) {
+				// Parse raw JSON
+				rawJSON := client["_raw_json"]
+				var clientData map[string]interface{}
+				if err := json.Unmarshal([]byte(rawJSON), &clientData); err != nil {
+					b.logger.Errorf("Failed to parse client JSON: %v", err)
+					continue
+				}
+
+				// Get old email (with suffix if present)
+				oldEmailWithSuffix := client["email"]
+				if oldEmailClean == "" {
+					oldEmailClean = stripInboundSuffix(oldEmailWithSuffix)
+				}
+
+				// Build new email with appropriate suffix for this inbound
+				newEmailForInbound := newEmail
+				if idx > 0 {
+					newEmailForInbound = fmt.Sprintf("%s##ib%d", newEmail, inboundID)
+				}
+
+				// Update email field
+				clientData["email"] = newEmailForInbound
+
+				// Fix numeric fields
+				b.clientService.FixNumericFields(clientData)
+
+				// Update client in this inbound
+				err = b.apiClient.UpdateClient(context.Background(), inboundID, oldEmailWithSuffix, clientData)
+				if err != nil {
+					b.logger.Errorf("Failed to update username in inbound %d: %v", inboundID, err)
+				} else {
+					b.logger.Infof("Updated username in inbound %d from %s to %s", inboundID, oldEmailWithSuffix, newEmailForInbound)
+					updatedCount++
+				}
+			}
+		}
+	}
+
+	if updatedCount == 0 {
+		b.sendMessage(chatID, "❌ Не удалось обновить username ни в одном inbound")
 		if err := b.deleteUserState(chatID); err != nil {
 			b.logger.Errorf("Failed to delete user state: %v", err)
 		}
 		return
 	}
 
-	// Update email field
-	clientData["email"] = newEmail
-
-	// Fix numeric fields
-	b.clientService.FixNumericFields(clientData)
-
-	// Call UpdateClient with old email as identifier
-	err = b.apiClient.UpdateClient(context.Background(), inboundID, oldEmail, clientData)
-	if err != nil {
-		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка обновления: %v", err))
-		b.logger.Errorf("Failed to update username for user %d: %v", userID, err)
-		if err := b.deleteUserState(chatID); err != nil {
-			b.logger.Errorf("Failed to delete user state: %v", err)
-		}
-		return
-	}
-
-	b.sendMessage(chatID, fmt.Sprintf("✅ Username успешно обновлен!\n\n👤 Старый: %s\n👤 Новый: %s", oldEmail, newEmail))
-	b.logger.Infof("Username updated for user %d from %s to %s", userID, oldEmail, newEmail)
+	b.sendMessage(chatID, fmt.Sprintf("✅ Username успешно обновлен во всех inbounds!\n\n👤 Старый: %s\n👤 Новый: %s\n📊 Обновлено: %d/%d", oldEmailClean, newEmail, updatedCount, len(inbounds)))
+	b.logger.Infof("Username updated for user %d from %s to %s in %d inbounds", userID, oldEmailClean, newEmail, updatedCount)
 
 	// Clear state
 	if err := b.deleteUserState(chatID); err != nil {
