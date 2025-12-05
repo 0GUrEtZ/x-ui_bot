@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"x-ui-bot/internal/config"
@@ -23,6 +24,7 @@ type ForecastService struct {
 	log              *logger.Logger
 	ticker           *time.Ticker
 	stopChan         chan struct{}
+	closeOnce        sync.Once
 	alertedThreshold map[int]bool // per-inbound threshold alert state
 	alertedPercent   map[int]bool // per-inbound percent alert state
 }
@@ -36,6 +38,7 @@ func NewForecastService(apiClient *client.APIClient, store storage.Storage, bot 
 		cfg:              cfg,
 		log:              log,
 		stopChan:         make(chan struct{}),
+		closeOnce:        sync.Once{},
 		alertedThreshold: make(map[int]bool),
 		alertedPercent:   make(map[int]bool),
 	}
@@ -44,7 +47,7 @@ func NewForecastService(apiClient *client.APIClient, store storage.Storage, bot 
 // CollectTrafficData pulls inbound traffic and saves snapshots per inbound
 func (s *ForecastService) CollectTrafficData() error {
 	s.log.Infof("Collecting traffic data")
-	inbounds, err := s.apiClient.GetInbounds()
+	inbounds, err := s.apiClient.GetInbounds(context.Background())
 	if err != nil {
 		s.log.Errorf("Failed to get inbounds from API: %v", err)
 		return err
@@ -207,7 +210,7 @@ func (s *ForecastService) Stop() {
 		s.ticker.Stop()
 	}
 	if s.stopChan != nil {
-		close(s.stopChan)
+		s.closeOnce.Do(func() { close(s.stopChan) })
 	}
 }
 

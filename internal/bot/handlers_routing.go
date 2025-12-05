@@ -2,13 +2,15 @@ package bot
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"html"
 	"math"
 	"strconv"
 	"strings"
 	"time"
+
+	"x-ui-bot/internal/bot/constants"
+	kbd "x-ui-bot/internal/bot/keyboard"
 
 	"github.com/mymmrac/telego"
 	th "github.com/mymmrac/telego/telegohandler"
@@ -73,7 +75,7 @@ func (b *Bot) handleCommand(ctx *th.Context, message telego.Message) error {
 	}
 
 	// Check if client is blocked (except for start, help, id commands and admins)
-	if !isAdmin && command != "start" && command != "help" && command != "id" {
+	if !isAdmin && command != constants.CmdStart && command != constants.CmdHelp && command != constants.CmdID {
 		if b.isClientBlocked(userID) {
 			b.sendMessage(chatID, "🔒 Ваш доступ заблокирован администратором.\n\nДля получения информации свяжитесь с администратором.")
 			return nil
@@ -81,26 +83,26 @@ func (b *Bot) handleCommand(ctx *th.Context, message telego.Message) error {
 	}
 
 	switch command {
-	case "start":
+	case constants.CmdStart:
 		b.handleStart(chatID, message.From.FirstName, isAdmin)
-	case "help":
+	case constants.CmdHelp:
 		b.handleHelp(chatID)
-	case "status":
+	case constants.CmdStatus:
 		b.handleStatus(chatID, isAdmin)
-	case "id":
+	case constants.CmdID:
 		b.handleID(chatID, message.From.ID)
-	case "usage":
+	case constants.CmdUsage:
 		if len(args) > 1 {
 			email := args[1]
 			b.handleUsage(chatID, email)
 		} else {
-			b.sendMessage(chatID, "❌ Использование: /usage &lt;email&gt;")
+			b.sendMessage(chatID, "❌ Использование: /usage <email>")
 		}
-	case "clients":
+	case constants.CmdClients:
 		b.handleClients(chatID, isAdmin)
 	default:
 		// Check if it's a client action command: /client_enable_1_0 or /client_disable_1_0
-		if strings.HasPrefix(command, "client_") && isAdmin {
+		if strings.HasPrefix(command, constants.CbClientPrefix) && isAdmin {
 			parts := strings.Split(command, "_")
 			if len(parts) == 4 {
 				action := parts[1] // enable or disable
@@ -109,8 +111,7 @@ func (b *Bot) handleCommand(ctx *th.Context, message telego.Message) error {
 
 				if err1 == nil && err2 == nil {
 					cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
-					if clientData, ok := b.clientCache.Load(cacheKey); ok {
-						client := clientData.(map[string]string)
+					if client, ok := b.getClientFromCacheCopy(cacheKey); ok {
 						email := client["email"]
 
 						switch action {
@@ -188,50 +189,50 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 	// Check if user is in registration process
 	if state, exists := b.getUserState(chatID); exists {
 		switch state {
-		case "awaiting_email":
+		case constants.StateAwaitingEmail:
 			b.handleRegistrationEmail(chatID, userID, message.Text)
 			return nil
-		case "awaiting_new_email":
+		case constants.StateAwaitingNewEmail:
 			b.handleNewEmailInput(chatID, userID, message.Text)
 			return nil
-		case "awaiting_admin_message":
+		case constants.StateAwaitingAdminMessage:
 			b.handleAdminMessageSend(chatID, message.Text)
 			return nil
-		case "awaiting_user_message":
+		case constants.StateAwaitingUserMessage:
 			b.handleUserMessageSend(chatID, userID, message.Text, message.From)
 			return nil
-		case "awaiting_broadcast_message":
+		case constants.StateAwaitingBroadcastMessage:
 			b.handleBroadcastMessage(chatID, message.Text)
 			return nil
 		}
 	}
 
 	switch message.Text {
-	case "📊 Статус сервера":
+	case constants.BtnServerStatus:
 		if !isAdmin {
 			b.sendMessage(chatID, "⛔ У вас нет прав")
 			return nil
 		}
 		b.handleStatus(chatID, isAdmin)
-	case "📊 Прогноз трафика":
+	case constants.BtnTrafficForecast:
 		if !isAdmin {
 			b.sendMessage(chatID, "⛔ У вас нет прав")
 			return nil
 		}
 		b.handleTrafficForecast(chatID)
-	case "👥 Список клиентов":
+	case constants.BtnClientList:
 		if !isAdmin {
 			b.sendMessage(chatID, "⛔ У вас нет прав")
 			return nil
 		}
 		b.handleClients(chatID, isAdmin)
-	case "📢 Сделать объявление":
+	case constants.BtnBroadcast:
 		if !isAdmin {
 			b.sendMessage(chatID, "⛔ У вас нет прав")
 			return nil
 		}
 		b.handleBroadcastStart(chatID)
-	case "💾 Бэкап БД":
+	case constants.BtnBackupDB:
 		if !isAdmin {
 			b.sendMessage(chatID, "⛔ У вас нет прав")
 			return nil
@@ -239,20 +240,20 @@ func (b *Bot) handleTextMessage(ctx *th.Context, message telego.Message) error {
 		b.handleBackupRequest(chatID)
 	default:
 		// Handle buttons with emoji (encoding issues)
-		if strings.Contains(message.Text, "Ознакомиться с условиями") {
+		if strings.Contains(message.Text, constants.BtnTerms) {
 			b.handleShowTerms(chatID, userID)
-		} else if strings.Contains(message.Text, "Моя подписка") || strings.Contains(message.Text, "инструкции") {
+		} else if strings.Contains(message.Text, constants.BtnMySubscription) || strings.Contains(message.Text, constants.BtnInstructions) {
 			b.handleMySubscription(chatID, userID)
-		} else if strings.Contains(message.Text, "Продлить подписку") {
+		} else if strings.Contains(message.Text, constants.BtnExtendSubscription) {
 			b.handleExtendSubscription(chatID, userID)
-		} else if strings.Contains(message.Text, "Настройки") {
+		} else if strings.Contains(message.Text, constants.BtnSettings) {
 			b.handleSettings(chatID, userID)
-		} else if strings.Contains(message.Text, "Обновить username") {
+		} else if strings.Contains(message.Text, constants.BtnUpdateUsername) {
 			b.handleUpdateUsername(chatID, userID)
-		} else if strings.Contains(message.Text, "Назад") {
+		} else if strings.Contains(message.Text, constants.BtnBack) {
 			// Return to main menu
 			b.handleStart(chatID, message.From.FirstName, false)
-		} else if strings.Contains(message.Text, "Связь с админом") {
+		} else if strings.Contains(message.Text, constants.BtnContactAdmin) {
 			b.handleContactAdmin(chatID, userID)
 		}
 	}
@@ -271,7 +272,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	b.logger.Infof("Callback from user %d: %s", userID, data)
 
 	// Handle terms acceptance/decline (before block check)
-	if data == "terms_accept" {
+	if data == constants.CbTermsAccept {
 		b.handleTermsAccept(chatID, userID, messageID, &query.From)
 		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
@@ -282,7 +283,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		return nil
 	}
 
-	if data == "terms_decline" {
+	if data == constants.CbTermsDecline {
 		b.handleTermsDecline(chatID, messageID)
 		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
@@ -294,7 +295,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	}
 
 	// Handle instructions menu (before block check - available to all users)
-	if data == "instructions_menu" {
+	if data == constants.CbInstructionsMenu {
 		b.handleInstructionsMenu(chatID, messageID)
 		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
@@ -305,8 +306,8 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	}
 
 	// Handle instruction platform selection (before block check - available to all users)
-	if strings.HasPrefix(data, "instr_") {
-		platform := strings.TrimPrefix(data, "instr_")
+	if strings.HasPrefix(data, constants.CbInstrPrefix) {
+		platform := strings.TrimPrefix(data, constants.CbInstrPrefix)
 		b.handleInstructionPlatform(chatID, userID, messageID, platform)
 		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
@@ -331,7 +332,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	}
 
 	// Handle registration duration selection (non-admin can use)
-	if strings.HasPrefix(data, "reg_duration_") {
+	if strings.HasPrefix(data, constants.CbRegDurationPrefix) {
 		parts := strings.Split(data, "_")
 		if len(parts) == 3 {
 			duration, err := strconv.Atoi(parts[2])
@@ -349,7 +350,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	}
 
 	// Handle subscription extension (non-admin can use)
-	if strings.HasPrefix(data, "extend_") {
+	if strings.HasPrefix(data, constants.CbExtendPrefix) {
 		parts := strings.Split(data, "_")
 		if len(parts) == 3 {
 			requestUserID, err1 := strconv.ParseInt(parts[1], 10, 64)
@@ -370,7 +371,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	}
 
 	// Handle contact admin (non-admin can use)
-	if data == "contact_admin" {
+	if data == constants.CbContactAdmin {
 		b.handleContactAdmin(chatID, userID)
 		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
@@ -394,12 +395,12 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	}
 
 	// Handle registration approval/rejection
-	if strings.HasPrefix(data, "approve_reg_") || strings.HasPrefix(data, "reject_reg_") {
+	if strings.HasPrefix(data, constants.CbApproveRegPrefix) || strings.HasPrefix(data, constants.CbRejectRegPrefix) {
 		parts := strings.Split(data, "_")
 		if len(parts) == 3 {
 			requestUserID, err := strconv.ParseInt(parts[2], 10, 64)
 			if err == nil {
-				isApprove := strings.HasPrefix(data, "approve_reg_")
+				isApprove := strings.HasPrefix(data, constants.CbApproveRegPrefix)
 				b.handleRegistrationDecision(requestUserID, chatID, messageID, isApprove)
 				return nil
 			}
@@ -407,16 +408,16 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	}
 
 	// Handle extension approval/rejection
-	if strings.HasPrefix(data, "approve_ext_") || strings.HasPrefix(data, "reject_ext_") {
+	if strings.HasPrefix(data, constants.CbApproveExtPrefix) || strings.HasPrefix(data, constants.CbRejectExtPrefix) {
 		parts := strings.Split(data, "_")
-		if strings.HasPrefix(data, "approve_ext_") && len(parts) == 4 {
+		if strings.HasPrefix(data, constants.CbApproveExtPrefix) && len(parts) == 4 {
 			requestUserID, err1 := strconv.ParseInt(parts[2], 10, 64)
 			duration, err2 := strconv.Atoi(parts[3])
 			if err1 == nil && err2 == nil {
 				b.handleExtensionApproval(requestUserID, chatID, messageID, duration)
 				return nil
 			}
-		} else if strings.HasPrefix(data, "reject_ext_") && len(parts) == 3 {
+		} else if strings.HasPrefix(data, constants.CbRejectExtPrefix) && len(parts) == 3 {
 			requestUserID, err := strconv.ParseInt(parts[2], 10, 64)
 			if err == nil {
 				b.handleExtensionRejection(requestUserID, chatID, messageID)
@@ -426,7 +427,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	}
 
 	// Handle client_X_Y buttons (show client actions menu)
-	if strings.HasPrefix(data, "client_") {
+	if strings.HasPrefix(data, constants.CbClientPrefix) {
 		parts := strings.Split(data, "_")
 		if len(parts) == 3 {
 			inboundID, err1 := strconv.Atoi(parts[1])
@@ -440,7 +441,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	}
 
 	// Handle back_to_clients button
-	if data == "back_to_clients" {
+	if data == constants.CbBackToClients {
 		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
 		}); err != nil {
@@ -451,7 +452,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	}
 
 	// Handle delete_X_Y buttons
-	if strings.HasPrefix(data, "delete_") {
+	if strings.HasPrefix(data, constants.CbDeletePrefix) {
 		parts := strings.Split(data, "_")
 		if len(parts) == 3 {
 			inboundID, err1 := strconv.Atoi(parts[1])
@@ -459,18 +460,12 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 
 			if err1 == nil && err2 == nil {
 				cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
-				if clientData, ok := b.clientCache.Load(cacheKey); ok {
-					client := clientData.(map[string]string)
+				if client, ok := b.getClientFromCacheCopy(cacheKey); ok {
 					email := client["email"]
 
 					// Show confirmation dialog
 					confirmMsg := fmt.Sprintf("❗ Вы уверены, что хотите удалить клиента?\n\n👤 Email: %s", email)
-					keyboard := tu.InlineKeyboard(
-						tu.InlineKeyboardRow(
-							tu.InlineKeyboardButton("✅ Да, удалить").WithCallbackData(fmt.Sprintf("confirm_delete_%d_%d", inboundID, clientIndex)),
-							tu.InlineKeyboardButton("❌ Отмена").WithCallbackData(fmt.Sprintf("cancel_delete_%d_%d", inboundID, clientIndex)),
-						),
-					)
+					keyboard := kbd.BuildConfirmDeleteKeyboard(inboundID, clientIndex)
 
 					if _, err := b.bot.EditMessageText(context.Background(), &telego.EditMessageTextParams{
 						ChatID:      tu.ID(chatID),
@@ -492,7 +487,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		}
 	}
 
-	if strings.HasPrefix(data, "confirm_delete_") {
+	if strings.HasPrefix(data, constants.CbConfirmDeletePrefix) {
 		parts := strings.Split(data, "_")
 		if len(parts) == 4 {
 			inboundID, err1 := strconv.Atoi(parts[2])
@@ -500,13 +495,12 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 
 			if err1 == nil && err2 == nil {
 				cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
-				if clientData, ok := b.clientCache.Load(cacheKey); ok {
-					client := clientData.(map[string]string)
+				if client, ok := b.getClientFromCacheCopy(cacheKey); ok {
 					email := client["email"]
 					clientID := client["id"] // UUID for VMESS/VLESS
 
 					// Delete the client using UUID
-					err := b.apiClient.DeleteClient(inboundID, clientID)
+					err := b.apiClient.DeleteClient(context.Background(), inboundID, clientID)
 
 					if err != nil {
 						if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
@@ -533,7 +527,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		}
 	}
 
-	if strings.HasPrefix(data, "cancel_delete_") {
+	if strings.HasPrefix(data, constants.CbCancelDeletePrefix) {
 		parts := strings.Split(data, "_")
 		if len(parts) == 4 {
 			inboundID, err1 := strconv.Atoi(parts[2])
@@ -561,8 +555,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 
 			if err1 == nil && err2 == nil {
 				cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
-				if clientData, ok := b.clientCache.Load(cacheKey); ok {
-					client := clientData.(map[string]string)
+				if client, ok := b.getClientFromCacheCopy(cacheKey); ok {
 					email := client["email"]
 					tgId := client["tgId"]
 
@@ -643,8 +636,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 
 			if err1 == nil && err2 == nil {
 				cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
-				if clientData, ok := b.clientCache.Load(cacheKey); ok {
-					client := clientData.(map[string]string)
+				if client, ok := b.getClientFromCacheCopy(cacheKey); ok {
 					email := client["email"]
 					enable := client["enable"]
 
@@ -668,13 +660,14 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 							b.logger.Errorf("Failed to answer toggle error callback: %v", err)
 						}
 					} else {
-						// Update enable status in cache immediately
+						// Update enable status in cache immediately (safe update)
+						var newEnable string
 						if enable == "false" {
-							client["enable"] = "true"
+							newEnable = "true"
 						} else {
-							client["enable"] = "false"
+							newEnable = "false"
 						}
-						b.clientCache.Store(cacheKey, client)
+						b.updateClientField(cacheKey, "enable", newEnable)
 
 						// Answer callback with text
 						if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
@@ -693,7 +686,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 	}
 
 	// Handle broadcast confirmation/cancellation
-	if data == "broadcast_confirm" {
+	if data == constants.CbBroadcastConfirm {
 		b.handleBroadcastConfirm(chatID, messageID)
 		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
@@ -704,7 +697,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		return nil
 	}
 
-	if data == "broadcast_cancel" {
+	if data == constants.CbBroadcastCancel {
 		b.handleBroadcastCancel(chatID, messageID)
 		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
@@ -735,11 +728,11 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 // handleClientMenu shows actions menu for a specific client
 func (b *Bot) handleClientMenu(chatID int64, messageID int, inboundID int, clientIndex int, queryID string) {
 	cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
-	clientData, ok := b.clientCache.Load(cacheKey)
+	client, ok := b.getClientFromCacheCopy(cacheKey)
 
 	// If not in cache, reload from API
 	if !ok {
-		inbounds, err := b.apiClient.GetInbounds()
+		inbounds, err := b.apiClient.GetInbounds(context.Background())
 		if err != nil {
 			if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 				CallbackQueryID: queryID,
@@ -754,23 +747,13 @@ func (b *Bot) handleClientMenu(chatID int64, messageID int, inboundID int, clien
 		// Find the specific inbound and client
 		for _, inbound := range inbounds {
 			if id, ok := inbound["id"].(float64); ok && int(id) == inboundID {
-				if settingsStr, ok := inbound["settings"].(string); ok {
-					var settings map[string]interface{}
-					if err := json.Unmarshal([]byte(settingsStr), &settings); err == nil {
-						if clients, ok := settings["clients"].([]interface{}); ok && clientIndex < len(clients) {
-							if clientMap, ok := clients[clientIndex].(map[string]interface{}); ok {
-								// Convert to map[string]string for compatibility
-								client := make(map[string]string)
-								for k, v := range clientMap {
-									client[k] = fmt.Sprintf("%v", v)
-								}
-								// Cache it for future use
-								b.clientCache.Store(cacheKey, client)
-								clientData = client
-								break
-							}
-						}
-					}
+				c, err := b.extractClientFromInbound(inbound, clientIndex)
+				if err == nil {
+					// Cache it for future use
+					b.storeClientToCache(cacheKey, c)
+					// Ensure the local 'client' variable has the loaded data
+					client = c
+					break
 				}
 			}
 		}
@@ -787,7 +770,7 @@ func (b *Bot) handleClientMenu(chatID int64, messageID int, inboundID int, clien
 		}
 	}
 
-	client := clientData.(map[string]string)
+	// 'client' already assigned via getClientFromCacheCopy or reloaded above
 	email := client["email"]
 	enable := client["enable"]
 	tgId := client["tgId"]
@@ -796,7 +779,7 @@ func (b *Bot) handleClientMenu(chatID int64, messageID int, inboundID int, clien
 
 	// Get client traffic stats
 	var up, down, total int64
-	traffic, err := b.apiClient.GetClientTraffics(email)
+	traffic, err := b.apiClient.GetClientTraffics(context.Background(), email)
 	if err == nil && traffic != nil {
 		if u, ok := traffic["up"].(float64); ok {
 			up = int64(u)

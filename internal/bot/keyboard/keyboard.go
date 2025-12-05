@@ -1,6 +1,9 @@
 package keyboard
 
 import (
+	"fmt"
+	"x-ui-bot/internal/bot/constants"
+
 	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
 )
@@ -9,15 +12,15 @@ import (
 func BuildAdminKeyboard() *telego.ReplyKeyboardMarkup {
 	return tu.Keyboard(
 		tu.KeyboardRow(
-			tu.KeyboardButton("📊 Статус сервера"),
-			tu.KeyboardButton("📊 Прогноз трафика"),
+			tu.KeyboardButton(constants.BtnServerStatus),
+			tu.KeyboardButton(constants.BtnTrafficForecast),
 		),
 		tu.KeyboardRow(
-			tu.KeyboardButton("👥 Список клиентов"),
-			tu.KeyboardButton("📢 Сделать объявление"),
+			tu.KeyboardButton(constants.BtnClientList),
+			tu.KeyboardButton(constants.BtnBroadcast),
 		),
 		tu.KeyboardRow(
-			tu.KeyboardButton("💾 Бэкап БД"),
+			tu.KeyboardButton(constants.BtnBackupDB),
 		),
 	).WithResizeKeyboard().WithIsPersistent()
 }
@@ -28,12 +31,12 @@ func BuildUserKeyboard(hasExpiry bool) *telego.ReplyKeyboardMarkup {
 		// Limited subscription - show extend button
 		return tu.Keyboard(
 			tu.KeyboardRow(
-				tu.KeyboardButton("📱 Моя подписка и инструкции"),
-				tu.KeyboardButton("⏰ Продлить подписку"),
+				tu.KeyboardButton(constants.BtnMySubscription),
+				tu.KeyboardButton(constants.BtnExtendSubscription),
 			),
 			tu.KeyboardRow(
-				tu.KeyboardButton("⚙️ Настройки"),
-				tu.KeyboardButton("💬 Связь с админом"),
+				tu.KeyboardButton(constants.BtnSettings),
+				tu.KeyboardButton(constants.BtnContactAdmin),
 			),
 		).WithResizeKeyboard().WithIsPersistent()
 	}
@@ -41,11 +44,11 @@ func BuildUserKeyboard(hasExpiry bool) *telego.ReplyKeyboardMarkup {
 	// Unlimited subscription - no extend button
 	return tu.Keyboard(
 		tu.KeyboardRow(
-			tu.KeyboardButton("📱 Моя подписка и инструкции"),
-			tu.KeyboardButton("⚙️ Настройки"),
+			tu.KeyboardButton(constants.BtnMySubscription),
+			tu.KeyboardButton(constants.BtnSettings),
 		),
 		tu.KeyboardRow(
-			tu.KeyboardButton("💬 Связь с админом"),
+			tu.KeyboardButton(constants.BtnContactAdmin),
 		),
 	).WithResizeKeyboard().WithIsPersistent()
 }
@@ -54,7 +57,7 @@ func BuildUserKeyboard(hasExpiry bool) *telego.ReplyKeyboardMarkup {
 func BuildGuestKeyboard() *telego.ReplyKeyboardMarkup {
 	return tu.Keyboard(
 		tu.KeyboardRow(
-			tu.KeyboardButton("📋 Ознакомиться с условиями"),
+			tu.KeyboardButton(constants.BtnTerms),
 		),
 	).WithResizeKeyboard().WithIsPersistent()
 }
@@ -63,8 +66,8 @@ func BuildGuestKeyboard() *telego.ReplyKeyboardMarkup {
 func BuildTermsKeyboard() *telego.InlineKeyboardMarkup {
 	return tu.InlineKeyboard(
 		tu.InlineKeyboardRow(
-			tu.InlineKeyboardButton("✅ Принять").WithCallbackData("terms_accept"),
-			tu.InlineKeyboardButton("❌ Отклонить").WithCallbackData("terms_decline"),
+			tu.InlineKeyboardButton("✅ Принять").WithCallbackData(constants.CbTermsAccept),
+			tu.InlineKeyboardButton("❌ Отклонить").WithCallbackData(constants.CbTermsDecline),
 		),
 	)
 }
@@ -73,10 +76,29 @@ func BuildTermsKeyboard() *telego.InlineKeyboardMarkup {
 func BuildSettingsKeyboard() *telego.ReplyKeyboardMarkup {
 	return tu.Keyboard(
 		tu.KeyboardRow(
-			tu.KeyboardButton("🔄 Обновить username"),
+			tu.KeyboardButton(constants.BtnUpdateUsername),
 		),
 		tu.KeyboardRow(
-			tu.KeyboardButton("◀️ Назад"),
+			tu.KeyboardButton(constants.BtnBack),
 		),
 	).WithResizeKeyboard().WithIsPersistent()
+}
+
+// BuildConfirmDeleteKeyboard builds a confirmation inline keyboard for client deletion
+func BuildConfirmDeleteKeyboard(inboundID int, clientIndex int) *telego.InlineKeyboardMarkup {
+	return tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("✅ Да, удалить").WithCallbackData(fmt.Sprintf("%s%d_%d", constants.CbConfirmDeletePrefix, inboundID, clientIndex)),
+			tu.InlineKeyboardButton("❌ Отмена").WithCallbackData(fmt.Sprintf("%s%d_%d", constants.CbCancelDeletePrefix, inboundID, clientIndex)),
+		),
+	)
+}
+
+// BuildReplyInlineKeyboard creates an inline keyboard with a reply button for admins to respond to users
+func BuildReplyInlineKeyboard(userID int64) *telego.InlineKeyboardMarkup {
+	return tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("💬 Ответить").WithCallbackData(fmt.Sprintf("%s%d", constants.CbReplyPrefix, userID)),
+		),
+	)
 }

@@ -8,6 +8,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"x-ui-bot/internal/bot/constants"
+
 	tu "github.com/mymmrac/telego/telegoutil"
 )
 
@@ -35,7 +37,7 @@ func (b *Bot) handleRegistrationStart(chatID int64, userID int64, userName strin
 		return
 	}
 
-	if err := b.setUserState(chatID, "awaiting_email"); err != nil {
+	if err := b.setUserState(chatID, constants.StateAwaitingEmail); err != nil {
 		b.sendMessage(chatID, "❌ Ошибка сохранения состояния")
 		return
 	}
@@ -75,20 +77,20 @@ func (b *Bot) handleRegistrationEmail(chatID int64, userID int64, email string) 
 		b.sendMessage(chatID, "❌ Ошибка сохранения заявки")
 		return
 	}
-	if err := b.setUserState(chatID, "awaiting_duration"); err != nil {
+	if err := b.setUserState(chatID, constants.StateAwaitingDuration); err != nil {
 		b.sendMessage(chatID, "❌ Ошибка сохранения состояния")
 		return
 	}
 
 	// Check if user has had previous subscriptions - trial only for first purchase
 	isFirstPurchase := true
-	_, err := b.apiClient.GetClientByTgID(userID)
+	_, err := b.apiClient.GetClientByTgID(context.Background(), userID)
 	if err == nil {
 		// User already exists - not first purchase
 		isFirstPurchase = false
 	}
 
-	keyboard := b.createDurationKeyboard("reg_duration", isFirstPurchase)
+	keyboard := b.createDurationKeyboard(constants.CbRegDurationBase, isFirstPurchase)
 
 	msg := fmt.Sprintf("✅ Username: %s\n\n🔹 Шаг 2/2: Выберите срок действия:", email)
 	if _, err := b.bot.SendMessage(context.Background(), tu.Message(tu.ID(chatID), msg).WithReplyMarkup(keyboard)); err != nil {
@@ -265,7 +267,7 @@ func (b *Bot) autoApproveRegistration(req *RegistrationRequest) {
 	req.Status = "approved"
 
 	// Get subscription link
-	subLink, err := b.apiClient.GetClientLink(req.Email)
+	subLink, err := b.apiClient.GetClientLink(context.Background(), req.Email)
 	if err != nil {
 		b.logger.Warnf("Failed to get subscription link: %v", err)
 		subLink = "Не удалось получить ссылку. Обратитесь к администратору."
@@ -361,7 +363,7 @@ func (b *Bot) handleRegistrationDecision(requestUserID int64, adminChatID int64,
 		req.Status = "approved"
 
 		// Get subscription link
-		subLink, err := b.apiClient.GetClientLink(req.Email)
+		subLink, err := b.apiClient.GetClientLink(context.Background(), req.Email)
 		if err != nil {
 			b.logger.Warnf("Failed to get subscription link: %v", err)
 			subLink = "Не удалось получить ссылку. Обратитесь к администратору."

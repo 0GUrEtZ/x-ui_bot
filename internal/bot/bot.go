@@ -58,8 +58,11 @@ type Bot struct {
 	authMiddleware *middleware.AuthMiddleware
 	rateLimiter    *middleware.RateLimiter
 
-	clientCache sync.Map      // Cache for client data: "inboundID_index" -> client map
-	stopBackup  chan struct{} // Signal to stop backup scheduler
+	clientCache     sync.Map           // Cache for client data: "inboundID_index" -> client map
+	cacheMutex      sync.RWMutex       // Protects concurrent access to clientCache
+	stopBackup      chan struct{}      // Signal to stop backup scheduler
+	broadcastCancel context.CancelFunc // Cancel function for active broadcast
+	broadcastMutex  sync.Mutex
 }
 
 // Storage interface for bot data persistence
@@ -116,7 +119,7 @@ func createTelegoBot(token, proxy, apiServer string) (*telego.Bot, error) {
 // Start starts the bot
 func (b *Bot) Start() error {
 	// Login to API
-	if err := b.apiClient.Login(); err != nil {
+	if err := b.apiClient.Login(context.Background()); err != nil {
 		return fmt.Errorf("failed to login to panel: %w", err)
 	}
 
@@ -249,7 +252,7 @@ func (b *Bot) cleanupExpiredStates(ctx context.Context) {
 // createClientForRequest creates a new client based on registration request
 func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 	// Get first inbound to add client to
-	inbounds, err := b.apiClient.GetInbounds()
+	inbounds, err := b.apiClient.GetInbounds(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to get inbounds: %w", err)
 	}
@@ -297,7 +300,7 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 	b.addProtocolFields(clientData, protocol, firstInbound)
 
 	// Add client via API
-	return b.apiClient.AddClient(inboundID, clientData)
+	return b.apiClient.AddClient(context.Background(), inboundID, clientData)
 }
 
 // backupScheduler periodically sends database backups to admins

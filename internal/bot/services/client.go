@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -106,7 +107,7 @@ func (s *ClientService) EnableClient(inboundID int, email string, client map[str
 	clientData["enable"] = true
 	s.fixNumericFields(clientData)
 
-	return s.apiClient.UpdateClient(inboundID, email, clientData)
+	return s.apiClient.UpdateClient(context.Background(), inboundID, email, clientData)
 }
 
 // DisableClient disables a client
@@ -125,7 +126,7 @@ func (s *ClientService) DisableClient(inboundID int, email string, client map[st
 	clientData["enable"] = false
 	s.fixNumericFields(clientData)
 
-	return s.apiClient.UpdateClient(inboundID, email, clientData)
+	return s.apiClient.UpdateClient(context.Background(), inboundID, email, clientData)
 }
 
 // FixNumericFields converts float64 to int64 for specific fields (public for external use)
@@ -184,7 +185,7 @@ func (s *ClientService) FormatBytes(value interface{}) string {
 
 // IsClientBlocked checks if a client is blocked
 func (s *ClientService) IsClientBlocked(userID int64) bool {
-	clientInfo, err := s.apiClient.GetClientByTgID(userID)
+	clientInfo, err := s.apiClient.GetClientByTgID(context.Background(), userID)
 	if err != nil || clientInfo == nil {
 		return false
 	}

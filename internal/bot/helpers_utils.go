@@ -21,7 +21,7 @@ func (b *Bot) isClientBlocked(userID int64) bool {
 	}
 
 	// Get client info
-	clientInfo, err := b.apiClient.GetClientByTgID(userID)
+	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), userID)
 	if err != nil {
 		// If client not found, consider as not blocked (allows registration)
 		return false
@@ -102,7 +102,7 @@ func (b *Bot) addProtocolFields(clientData map[string]interface{}, protocol stri
 
 // findClientByTgID finds client and inbound by telegram user ID
 func (b *Bot) findClientByTgID(userID int64) (client map[string]string, inboundID int, email string, err error) {
-	inbounds, err := b.apiClient.GetInbounds()
+	inbounds, err := b.apiClient.GetInbounds(context.Background())
 	if err != nil {
 		return nil, 0, "", fmt.Errorf("failed to get inbounds: %w", err)
 	}
@@ -181,4 +181,93 @@ func (b *Bot) createDurationKeyboard(callbackPrefix string, isFirstPurchase bool
 	)
 
 	return tu.InlineKeyboard(rows...)
+}
+
+// copyClientMap makes a deep copy of client map to avoid concurrent mutation
+func copyClientMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+// getClientFromCacheCopy returns a copy of client map stored under cacheKey
+func (b *Bot) getClientFromCacheCopy(cacheKey string) (map[string]string, bool) {
+	b.cacheMutex.RLock()
+	defer b.cacheMutex.RUnlock()
+
+	if v, ok := b.clientCache.Load(cacheKey); ok {
+		if client, ok2 := v.(map[string]string); ok2 {
+			return copyClientMap(client), true
+		}
+	}
+	return nil, false
+}
+
+// storeClientToCache stores a copy of the client map in cache
+func (b *Bot) storeClientToCache(cacheKey string, client map[string]string) {
+	if client == nil {
+		return
+	}
+	b.cacheMutex.Lock()
+	defer b.cacheMutex.Unlock()
+	b.clientCache.Store(cacheKey, copyClientMap(client))
+}
+
+// updateClientField safely updates a single field in the cached client map
+// returns the new map copy or nil if not found
+func (b *Bot) updateClientField(cacheKey, field, value string) map[string]string {
+	b.cacheMutex.Lock()
+	defer b.cacheMutex.Unlock()
+
+	v, ok := b.clientCache.Load(cacheKey)
+	if !ok {
+		return nil
+	}
+	client, ok := v.(map[string]string)
+	if !ok {
+		return nil
+	}
+	newClient := copyClientMap(client)
+	newClient[field] = value
+	b.clientCache.Store(cacheKey, newClient)
+	return newClient
+}
+
+// extractClientFromInbound safely extracts a client map from an inbound's settings
+func (b *Bot) extractClientFromInbound(inbound map[string]interface{}, clientIndex int) (map[string]string, error) {
+	settingsStr, ok := inbound["settings"].(string)
+	if !ok {
+		return nil, fmt.Errorf("settings not found or not a string")
+	}
+
+	var settings map[string]interface{}
+	if err := json.Unmarshal([]byte(settingsStr), &settings); err != nil {
+		return nil, fmt.Errorf("failed to parse settings json: %w", err)
+	}
+
+	clients, ok := settings["clients"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("clients array not found")
+	}
+
+	if clientIndex < 0 || clientIndex >= len(clients) {
+		return nil, fmt.Errorf("client index out of range")
+	}
+
+	clientMap, ok := clients[clientIndex].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid client data format")
+	}
+
+	// Convert to map[string]string
+	result := make(map[string]string)
+	for k, v := range clientMap {
+		result[k] = fmt.Sprintf("%v", v)
+	}
+	return result, nil
 }

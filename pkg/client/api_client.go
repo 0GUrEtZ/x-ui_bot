@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,13 +40,13 @@ func NewAPIClient(baseURL, username, password string) *APIClient {
 }
 
 // Login authenticates with the 3x-ui panel
-func (c *APIClient) Login() error {
+func (c *APIClient) Login(ctx context.Context) error {
 	loginData := map[string]string{
 		"username": c.username,
 		"password": c.password,
 	}
 
-	resp, err := c.doRequest("POST", "/login", loginData, false)
+	resp, err := c.doRequest(ctx, "POST", "/login", loginData, false)
 	if err != nil {
 		return fmt.Errorf("login request failed: %w", err)
 	}
@@ -68,7 +69,7 @@ func (c *APIClient) Login() error {
 }
 
 // doRequest performs an HTTP request
-func (c *APIClient) doRequest(method, path string, data interface{}, needAuth bool) (*http.Response, error) {
+func (c *APIClient) doRequest(ctx context.Context, method, path string, data interface{}, needAuth bool) (*http.Response, error) {
 	var body io.Reader
 	if data != nil {
 		jsonData, err := json.Marshal(data)
@@ -78,7 +79,7 @@ func (c *APIClient) doRequest(method, path string, data interface{}, needAuth bo
 		body = bytes.NewBuffer(jsonData)
 	}
 
-	req, err := http.NewRequest(method, c.baseURL+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -97,18 +98,18 @@ func (c *APIClient) doRequest(method, path string, data interface{}, needAuth bo
 }
 
 // GetStatus gets server status
-func (c *APIClient) GetStatus() (map[string]interface{}, error) {
-	resp, err := c.doRequest("GET", "/panel/api/server/status", nil, true)
+func (c *APIClient) GetStatus(ctx context.Context) (map[string]interface{}, error) {
+	resp, err := c.doRequest(ctx, "GET", "/panel/api/server/status", nil, true)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("status request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		if err := c.Login(); err != nil {
-			return nil, err
+		if err := c.Login(ctx); err != nil {
+			return nil, fmt.Errorf("re-login failed: %w", err)
 		}
-		return c.GetStatus()
+		return c.GetStatus(ctx)
 	}
 
 	var result map[string]interface{}
@@ -119,61 +120,59 @@ func (c *APIClient) GetStatus() (map[string]interface{}, error) {
 	return result, nil
 }
 
-// GetInbounds gets all inbounds
-func (c *APIClient) GetInbounds() ([]map[string]interface{}, error) {
-
-	resp, err := c.doRequest("GET", "/panel/api/inbounds/list", nil, true)
+// GetInbounds gets list of inbounds
+func (c *APIClient) GetInbounds(ctx context.Context) ([]map[string]interface{}, error) {
+	resp, err := c.doRequest(ctx, "GET", "/panel/api/inbounds/list", nil, true)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, fmt.Errorf("inbounds request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		if err := c.Login(); err != nil {
+		if err := c.Login(ctx); err != nil {
 			return nil, fmt.Errorf("re-login failed: %w", err)
 		}
-		return c.GetInbounds()
-	}
-
-	// Read body for better error reporting
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return c.GetInbounds(ctx)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("inbounds request failed with status: %d, body: %s", resp.StatusCode, string(body))
 	}
 
-	var result struct {
-		Success bool                     `json:"success"`
-		Obj     []map[string]interface{} `json:"obj"`
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %w (body: %s)", err, string(body))
+	if success, ok := result["success"].(bool); ok && success {
+		if obj, ok := result["obj"].([]interface{}); ok {
+			var inbounds []map[string]interface{}
+			for _, item := range obj {
+				if inbound, ok := item.(map[string]interface{}); ok {
+					inbounds = append(inbounds, inbound)
+				}
+			}
+			return inbounds, nil
+		}
 	}
 
-	if !result.Success {
-		return nil, fmt.Errorf("API returned success=false (body: %s)", string(body))
-	}
-
-	return result.Obj, nil
+	return nil, fmt.Errorf("invalid response format")
 }
 
-// GetInbound gets a specific inbound by ID
-func (c *APIClient) GetInbound(id int) (map[string]interface{}, error) {
-	resp, err := c.doRequest("GET", fmt.Sprintf("/panel/api/inbounds/get/%d", id), nil, true)
+// GetInbound gets inbound by ID
+func (c *APIClient) GetInbound(ctx context.Context, id int) (map[string]interface{}, error) {
+	resp, err := c.doRequest(ctx, "GET", fmt.Sprintf("/panel/api/inbounds/get/%d", id), nil, true)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("inbound request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		if err := c.Login(); err != nil {
-			return nil, err
+		if err := c.Login(ctx); err != nil {
+			return nil, fmt.Errorf("re-login failed: %w", err)
 		}
-		return c.GetInbound(id)
+		return c.GetInbound(ctx, id)
 	}
 
 	var result struct {
@@ -193,19 +192,19 @@ func (c *APIClient) GetInbound(id int) (map[string]interface{}, error) {
 }
 
 // ResetClientTraffic resets traffic for a client by email
-func (c *APIClient) ResetClientTraffic(email string) error {
+func (c *APIClient) ResetClientTraffic(ctx context.Context, email string) error {
 	data := map[string]string{"email": email}
-	resp, err := c.doRequest("POST", "/panel/api/inbounds/resetClientTraffic", data, true)
+	resp, err := c.doRequest(ctx, "POST", "/panel/api/inbounds/resetClientTraffic", data, true)
 	if err != nil {
-		return err
+		return fmt.Errorf("reset traffic request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		if err := c.Login(); err != nil {
-			return err
+		if err := c.Login(ctx); err != nil {
+			return fmt.Errorf("re-login failed: %w", err)
 		}
-		return c.ResetClientTraffic(email)
+		return c.ResetClientTraffic(ctx, email)
 	}
 
 	var result struct {
@@ -224,18 +223,18 @@ func (c *APIClient) ResetClientTraffic(email string) error {
 }
 
 // GetClientTraffics gets client traffic statistics by email
-func (c *APIClient) GetClientTraffics(email string) (map[string]interface{}, error) {
-	resp, err := c.doRequest("GET", fmt.Sprintf("/panel/api/inbounds/getClientTraffics/%s", email), nil, true)
+func (c *APIClient) GetClientTraffics(ctx context.Context, email string) (map[string]interface{}, error) {
+	resp, err := c.doRequest(ctx, "GET", fmt.Sprintf("/panel/api/inbounds/getClientTraffics/%s", email), nil, true)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		if err := c.Login(); err != nil {
+		if err := c.Login(ctx); err != nil {
 			return nil, err
 		}
-		return c.GetClientTraffics(email)
+		return c.GetClientTraffics(ctx, email)
 	}
 
 	var result struct {
@@ -255,20 +254,20 @@ func (c *APIClient) GetClientTraffics(email string) (map[string]interface{}, err
 }
 
 // GetClientTrafficsById gets all client traffic statistics for an inbound by ID
-func (c *APIClient) GetClientTrafficsById(inboundID int) ([]map[string]interface{}, error) {
+func (c *APIClient) GetClientTrafficsById(ctx context.Context, inboundID int) ([]map[string]interface{}, error) {
 	path := fmt.Sprintf("/panel/api/inbounds/getClientTrafficsById/%d", inboundID)
 
-	resp, err := c.doRequest("GET", path, nil, true)
+	resp, err := c.doRequest(ctx, "GET", path, nil, true)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		if err := c.Login(); err != nil {
+		if err := c.Login(ctx); err != nil {
 			return nil, err
 		}
-		return c.GetClientTrafficsById(inboundID)
+		return c.GetClientTrafficsById(ctx, inboundID)
 	}
 
 	// Read body for debugging
@@ -294,11 +293,11 @@ func (c *APIClient) GetClientTrafficsById(inboundID int) ([]map[string]interface
 }
 
 // UpdateClient updates an existing client in an inbound
-func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[string]interface{}) error {
+func (c *APIClient) UpdateClient(ctx context.Context, inboundID int, clientID string, clientData map[string]interface{}) error {
 	log.Printf("[INFO] UpdateClient called for inbound=%d, client=%s", inboundID, clientID)
 
 	// Get current inbound data
-	inbounds, err := c.GetInbounds()
+	inbounds, err := c.GetInbounds(ctx)
 	if err != nil {
 		log.Printf("[ERROR] Failed to get inbounds: %v", err)
 		return fmt.Errorf("failed to get inbounds: %w", err)
@@ -380,7 +379,7 @@ func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[
 	}
 
 	log.Printf("[INFO] Sending updateClient request for %s (UUID: %s), inbound: %d", clientID, clientUUID, inboundID)
-	resp, err := c.doRequest("POST", fmt.Sprintf("/panel/api/inbounds/updateClient/%s", clientUUID), data, true)
+	resp, err := c.doRequest(ctx, "POST", fmt.Sprintf("/panel/api/inbounds/updateClient/%s", clientUUID), data, true)
 	if err != nil {
 		log.Printf("[ERROR] doRequest failed: %v", err)
 		return fmt.Errorf("request failed: %w", err)
@@ -389,10 +388,10 @@ func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[
 	log.Printf("[INFO] Got response with status: %d", resp.StatusCode)
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		if err := c.Login(); err != nil {
+		if err := c.Login(ctx); err != nil {
 			return fmt.Errorf("re-login failed: %w", err)
 		}
-		return c.UpdateClient(inboundID, clientID, clientData)
+		return c.UpdateClient(ctx, inboundID, clientID, clientData)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -426,11 +425,11 @@ func (c *APIClient) UpdateClient(inboundID int, clientID string, clientData map[
 }
 
 // DeleteClient deletes a client from an inbound
-func (c *APIClient) DeleteClient(inboundID int, clientID string) error {
+func (c *APIClient) DeleteClient(ctx context.Context, inboundID int, clientID string) error {
 	log.Printf("[INFO] DeleteClient called for inbound=%d, clientID=%s", inboundID, clientID)
 
 	// According to 3x-ui API, delClient endpoint expects clientId (UUID for VMESS/VLESS)
-	resp, err := c.doRequest("POST", fmt.Sprintf("/panel/api/inbounds/%d/delClient/%s", inboundID, clientID), map[string]interface{}{
+	resp, err := c.doRequest(ctx, "POST", fmt.Sprintf("/panel/api/inbounds/%d/delClient/%s", inboundID, clientID), map[string]interface{}{
 		"id": inboundID,
 	}, true)
 	if err != nil {
@@ -441,10 +440,10 @@ func (c *APIClient) DeleteClient(inboundID int, clientID string) error {
 	log.Printf("[INFO] DeleteClient got response with status: %d", resp.StatusCode)
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		if err := c.Login(); err != nil {
+		if err := c.Login(ctx); err != nil {
 			return fmt.Errorf("re-login failed: %w", err)
 		}
-		return c.DeleteClient(inboundID, clientID)
+		return c.DeleteClient(ctx, inboundID, clientID)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -480,7 +479,7 @@ func (c *APIClient) DeleteClient(inboundID int, clientID string) error {
 }
 
 // AddClient adds a new client to an inbound
-func (c *APIClient) AddClient(inboundID int, clientData map[string]interface{}) error {
+func (c *APIClient) AddClient(ctx context.Context, inboundID int, clientData map[string]interface{}) error {
 
 	clientJSON, _ := json.Marshal(clientData)
 	data := map[string]interface{}{
@@ -488,17 +487,17 @@ func (c *APIClient) AddClient(inboundID int, clientData map[string]interface{}) 
 		"settings": fmt.Sprintf(`{"clients":[%s]}`, string(clientJSON)),
 	}
 
-	resp, err := c.doRequest("POST", "/panel/api/inbounds/addClient", data, true)
+	resp, err := c.doRequest(ctx, "POST", "/panel/api/inbounds/addClient", data, true)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		if err := c.Login(); err != nil {
+		if err := c.Login(ctx); err != nil {
 			return fmt.Errorf("re-login failed: %w", err)
 		}
-		return c.AddClient(inboundID, clientData)
+		return c.AddClient(ctx, inboundID, clientData)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -527,9 +526,9 @@ func (c *APIClient) AddClient(inboundID int, clientData map[string]interface{}) 
 }
 
 // GetClientByTgID returns client information by Telegram ID
-func (c *APIClient) GetClientByTgID(tgID int64) (map[string]interface{}, error) {
+func (c *APIClient) GetClientByTgID(ctx context.Context, tgID int64) (map[string]interface{}, error) {
 	// Get all inbounds
-	inbounds, err := c.GetInbounds()
+	inbounds, err := c.GetInbounds(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get inbounds: %w", err)
 	}
@@ -578,8 +577,8 @@ func (c *APIClient) GetClientByTgID(tgID int64) (map[string]interface{}, error) 
 }
 
 // GetPanelSettings returns the panel settings including subscription configuration
-func (c *APIClient) GetPanelSettings() (map[string]interface{}, error) {
-	resp, err := c.doRequest("POST", "/panel/setting/all", nil, true)
+func (c *APIClient) GetPanelSettings(ctx context.Context) (map[string]interface{}, error) {
+	resp, err := c.doRequest(ctx, "POST", "/panel/setting/all", nil, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get panel settings: %w", err)
 	}
@@ -611,9 +610,9 @@ func (c *APIClient) GetPanelSettings() (map[string]interface{}, error) {
 }
 
 // GetClientLink returns the subscription link for a specific client email
-func (c *APIClient) GetClientLink(email string) (string, error) {
+func (c *APIClient) GetClientLink(ctx context.Context, email string) (string, error) {
 	// Try to get the link directly from API
-	resp, err := c.doRequest("GET", fmt.Sprintf("/panel/api/inbounds/getClientLink/%s", email), nil, true)
+	resp, err := c.doRequest(ctx, "GET", fmt.Sprintf("/panel/api/inbounds/getClientLink/%s", email), nil, true)
 	if err == nil {
 		defer func() { _ = resp.Body.Close() }()
 
@@ -632,13 +631,13 @@ func (c *APIClient) GetClientLink(email string) (string, error) {
 	// Fallback: construct link manually using panel settings
 
 	// Get panel settings to find subURI
-	panelSettings, err := c.GetPanelSettings()
+	panelSettings, err := c.GetPanelSettings(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get panel settings: %w", err)
 	}
 
 	// Find the client to get their subId
-	inbounds, err := c.GetInbounds()
+	inbounds, err := c.GetInbounds(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get inbounds: %w", err)
 	}
@@ -757,10 +756,10 @@ func (c *APIClient) GetClientLink(email string) (string, error) {
 }
 
 // GetDatabaseBackup downloads x-ui database backup
-func (c *APIClient) GetDatabaseBackup() ([]byte, error) {
+func (c *APIClient) GetDatabaseBackup(ctx context.Context) ([]byte, error) {
 	url := c.baseURL + "/panel/api/server/getDb"
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}

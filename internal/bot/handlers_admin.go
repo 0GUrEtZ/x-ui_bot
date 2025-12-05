@@ -10,6 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"x-ui-bot/internal/bot/constants"
+	kbd "x-ui-bot/internal/bot/keyboard"
+
 	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
 )
@@ -42,9 +45,9 @@ func (b *Bot) handleAdminMessageSend(adminChatID int64, messageText string) {
 
 	// Create reply button for user
 	replyButton := tu.InlineKeyboardButton("💬 Ответить").
-		WithCallbackData("contact_admin")
+		WithCallbackData(constants.CbContactAdmin)
 
-	keyboard := &telego.InlineKeyboardMarkup{
+	replyKB := &telego.InlineKeyboardMarkup{
 		InlineKeyboard: [][]telego.InlineKeyboardButton{
 			{replyButton},
 		},
@@ -55,7 +58,7 @@ func (b *Bot) handleAdminMessageSend(adminChatID int64, messageText string) {
 		ChatID:      tu.ID(clientTgID),
 		Text:        fmt.Sprintf("📨 <b>Сообщение от администратора:</b>\n\n%s", messageText),
 		ParseMode:   "HTML",
-		ReplyMarkup: keyboard,
+		ReplyMarkup: replyKB,
 	})
 
 	if err != nil {
@@ -104,9 +107,9 @@ func (b *Bot) handleAdminMediaSend(adminChatID int64, message *telego.Message) {
 
 	// Create reply button for user
 	replyButton := tu.InlineKeyboardButton("💬 Ответить").
-		WithCallbackData("contact_admin")
+		WithCallbackData(constants.CbContactAdmin)
 
-	keyboard := &telego.InlineKeyboardMarkup{
+	replyKB := &telego.InlineKeyboardMarkup{
 		InlineKeyboard: [][]telego.InlineKeyboardButton{
 			{replyButton},
 		},
@@ -121,7 +124,7 @@ func (b *Bot) handleAdminMediaSend(adminChatID int64, message *telego.Message) {
 			Photo:       tu.FileFromID(photo.FileID),
 			Caption:     caption,
 			ParseMode:   telego.ModeHTML,
-			ReplyMarkup: keyboard,
+			ReplyMarkup: replyKB,
 		}); err != nil {
 			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить сообщение клиенту %s: %v", state.ClientEmail, err))
 		} else {
@@ -133,7 +136,7 @@ func (b *Bot) handleAdminMediaSend(adminChatID int64, message *telego.Message) {
 			Video:       tu.FileFromID(message.Video.FileID),
 			Caption:     caption,
 			ParseMode:   telego.ModeHTML,
-			ReplyMarkup: keyboard,
+			ReplyMarkup: replyKB,
 		}); err != nil {
 			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить сообщение клиенту %s: %v", state.ClientEmail, err))
 		} else {
@@ -145,7 +148,7 @@ func (b *Bot) handleAdminMediaSend(adminChatID int64, message *telego.Message) {
 			Document:    tu.FileFromID(message.Document.FileID),
 			Caption:     caption,
 			ParseMode:   telego.ModeHTML,
-			ReplyMarkup: keyboard,
+			ReplyMarkup: replyKB,
 		}); err != nil {
 			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить сообщение клиенту %s: %v", state.ClientEmail, err))
 		} else {
@@ -157,7 +160,7 @@ func (b *Bot) handleAdminMediaSend(adminChatID int64, message *telego.Message) {
 			Audio:       tu.FileFromID(message.Audio.FileID),
 			Caption:     caption,
 			ParseMode:   telego.ModeHTML,
-			ReplyMarkup: keyboard,
+			ReplyMarkup: replyKB,
 		}); err != nil {
 			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить сообщение клиенту %s: %v", state.ClientEmail, err))
 		} else {
@@ -169,7 +172,7 @@ func (b *Bot) handleAdminMediaSend(adminChatID int64, message *telego.Message) {
 			Voice:       tu.FileFromID(message.Voice.FileID),
 			Caption:     caption,
 			ParseMode:   telego.ModeHTML,
-			ReplyMarkup: keyboard,
+			ReplyMarkup: replyKB,
 		}); err != nil {
 			b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить сообщение клиенту %s: %v", state.ClientEmail, err))
 		} else {
@@ -195,7 +198,7 @@ func (b *Bot) handleContactAdmin(chatID int64, userID int64) {
 	userName := ""
 
 	// Try to get from API (if registered)
-	clientInfo, err := b.apiClient.GetClientByTgID(userID)
+	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), userID)
 	if err == nil && clientInfo != nil {
 		if email, ok := clientInfo["email"].(string); ok {
 			userName = email
@@ -212,7 +215,7 @@ func (b *Bot) handleContactAdmin(chatID int64, userID int64) {
 		b.sendMessage(chatID, "❌ Ошибка сохранения состояния")
 		return
 	}
-	if err := b.setUserState(chatID, "awaiting_user_message"); err != nil {
+	if err := b.setUserState(chatID, constants.StateAwaitingUserMessage); err != nil {
 		b.sendMessage(chatID, "❌ Ошибка сохранения состояния")
 		return
 	}
@@ -254,14 +257,10 @@ func (b *Bot) handleUserMessageSend(chatID int64, userID int64, messageText stri
 			html.EscapeString(messageText),
 		)
 
-		keyboard := tu.InlineKeyboard(
-			tu.InlineKeyboardRow(
-				tu.InlineKeyboardButton("💬 Ответить").WithCallbackData(fmt.Sprintf("reply_%d", userID)),
-			),
-		)
+		kb := kbd.BuildReplyInlineKeyboard(userID)
 
 		if _, err := b.bot.SendMessage(context.Background(), tu.Message(tu.ID(adminID), msg).
-			WithReplyMarkup(keyboard).
+			WithReplyMarkup(kb).
 			WithParseMode("HTML")); err != nil {
 			b.logger.Errorf("Failed to send message to admin %d: %v", adminID, err)
 		}
@@ -280,7 +279,7 @@ func (b *Bot) handleUserMessageSend(chatID int64, userID int64, messageText stri
 
 // handleUsage handles the /usage command
 func (b *Bot) handleUsage(chatID int64, email string) {
-	traffic, err := b.apiClient.GetClientTraffics(email)
+	traffic, err := b.apiClient.GetClientTraffics(context.Background(), email)
 	if err != nil {
 		b.sendMessage(chatID, fmt.Sprintf("❌ Failed to get client traffic: %v", err))
 		return
@@ -377,7 +376,7 @@ func (b *Bot) handleExtendSubscription(chatID int64, userID int64) {
 	b.logger.Infof("User %d requested subscription extension", userID)
 
 	// Get client info
-	clientInfo, err := b.apiClient.GetClientByTgID(userID)
+	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), userID)
 	if err != nil {
 		b.sendMessage(chatID, "❌ У вас нет активной подписки.\n\nДля получения VPN используйте кнопку '📱 Получить VPN'")
 		return
@@ -420,7 +419,7 @@ func (b *Bot) handleExtendSubscription(chatID int64, userID int64) {
 // handleExtensionRequest processes subscription extension request
 func (b *Bot) handleExtensionRequest(userID int64, chatID int64, messageID int, duration int, tgUsername string) {
 	// Get client info
-	clientInfo, err := b.apiClient.GetClientByTgID(userID)
+	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), userID)
 	if err != nil {
 		b.sendMessage(chatID, "❌ Ошибка: клиент не найден")
 		return
@@ -560,7 +559,7 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 	b.clientService.FixNumericFields(clientData)
 
 	// Update client via API
-	err = b.apiClient.UpdateClient(inboundID, email, clientData)
+	err = b.apiClient.UpdateClient(context.Background(), inboundID, email, clientData)
 	if err != nil {
 		b.sendMessage(adminChatID, fmt.Sprintf("❌ Ошибка при обновлении подписки: %v", err))
 		b.logger.Errorf("Failed to update client subscription: %v", err)
@@ -568,7 +567,7 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 	}
 
 	// Get subscription link
-	subLink, err := b.apiClient.GetClientLink(email)
+	subLink, err := b.apiClient.GetClientLink(context.Background(), email)
 	if err != nil {
 		b.logger.Warnf("Failed to get subscription link: %v", err)
 		subLink = "Не удалось получить ссылку"
@@ -583,7 +582,7 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 	// Notify user
 
 	// Get client info for device limit
-	clientInfo, err := b.apiClient.GetClientByTgID(userID)
+	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), userID)
 	limitDevicesText := ""
 	if err == nil {
 		if limitIP, ok := clientInfo["limitIp"].(float64); ok && int(limitIP) > 0 {
@@ -641,7 +640,7 @@ func (b *Bot) handleExtensionRejection(userID int64, adminChatID int64, messageI
 	userName, tgUsername := b.getUserInfo(userID)
 
 	// Get client info for logging
-	clientInfo, err := b.apiClient.GetClientByTgID(userID)
+	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), userID)
 	email := ""
 	if err == nil {
 		if e, ok := clientInfo["email"].(string); ok {
@@ -680,7 +679,7 @@ func (b *Bot) handleBackupRequest(chatID int64) {
 	b.sendMessage(chatID, "⏳ Создаю бэкап базы данных...")
 
 	// Download backup from panel
-	backup, err := b.apiClient.GetDatabaseBackup()
+	backup, err := b.apiClient.GetDatabaseBackup(context.Background())
 	if err != nil {
 		b.logger.Errorf("Failed to download backup: %v", err)
 		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка создания бэкапа: %v", err))
@@ -719,7 +718,7 @@ func (b *Bot) handleTrafficForecast(chatID int64) {
 	}
 
 	// Get list of inbounds
-	inbounds, err := b.apiClient.GetInbounds()
+	inbounds, err := b.apiClient.GetInbounds(context.Background())
 	if err != nil {
 		b.logger.Errorf("Failed to get inbounds: %v", err)
 		b.sendMessage(chatID, "❌ Ошибка при получении списка инбаундов")
@@ -818,11 +817,7 @@ func (b *Bot) handleUserMediaSend(chatID int64, userID int64, message *telego.Me
 		caption += fmt.Sprintf("\n\n💬 <i>%s</i>", html.EscapeString(message.Caption))
 	}
 
-	keyboard := tu.InlineKeyboard(
-		tu.InlineKeyboardRow(
-			tu.InlineKeyboardButton("💬 Ответить").WithCallbackData(fmt.Sprintf("reply_%d", userID)),
-		),
-	)
+	kb := kbd.BuildReplyInlineKeyboard(userID)
 
 	// Send media to all admins
 	for _, adminID := range b.config.Telegram.AdminIDs {
@@ -835,7 +830,7 @@ func (b *Bot) handleUserMediaSend(chatID int64, userID int64, message *telego.Me
 				Photo:       tu.FileFromID(photo.FileID),
 				Caption:     caption,
 				ParseMode:   telego.ModeHTML,
-				ReplyMarkup: keyboard,
+				ReplyMarkup: kb,
 			}); err != nil {
 				b.logger.Errorf("Failed to send photo to admin %d: %v", adminID, err)
 			}
@@ -845,7 +840,7 @@ func (b *Bot) handleUserMediaSend(chatID int64, userID int64, message *telego.Me
 				Video:       tu.FileFromID(message.Video.FileID),
 				Caption:     caption,
 				ParseMode:   telego.ModeHTML,
-				ReplyMarkup: keyboard,
+				ReplyMarkup: kb,
 			}); err != nil {
 				b.logger.Errorf("Failed to send video to admin %d: %v", adminID, err)
 			}
@@ -855,7 +850,7 @@ func (b *Bot) handleUserMediaSend(chatID int64, userID int64, message *telego.Me
 				Document:    tu.FileFromID(message.Document.FileID),
 				Caption:     caption,
 				ParseMode:   telego.ModeHTML,
-				ReplyMarkup: keyboard,
+				ReplyMarkup: kb,
 			}); err != nil {
 				b.logger.Errorf("Failed to send document to admin %d: %v", adminID, err)
 			}
@@ -865,7 +860,7 @@ func (b *Bot) handleUserMediaSend(chatID int64, userID int64, message *telego.Me
 				Audio:       tu.FileFromID(message.Audio.FileID),
 				Caption:     caption,
 				ParseMode:   telego.ModeHTML,
-				ReplyMarkup: keyboard,
+				ReplyMarkup: kb,
 			}); err != nil {
 				b.logger.Errorf("Failed to send audio to admin %d: %v", adminID, err)
 			}
@@ -875,7 +870,7 @@ func (b *Bot) handleUserMediaSend(chatID int64, userID int64, message *telego.Me
 				Voice:       tu.FileFromID(message.Voice.FileID),
 				Caption:     caption,
 				ParseMode:   telego.ModeHTML,
-				ReplyMarkup: keyboard,
+				ReplyMarkup: kb,
 			}); err != nil {
 				b.logger.Errorf("Failed to send voice to admin %d: %v", adminID, err)
 			}

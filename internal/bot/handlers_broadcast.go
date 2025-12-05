@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"x-ui-bot/internal/bot/constants"
+
 	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
 )
@@ -57,8 +59,8 @@ func (b *Bot) handleBroadcastMessage(chatID int64, message string) {
 
 	keyboard := tu.InlineKeyboard(
 		tu.InlineKeyboardRow(
-			tu.InlineKeyboardButton("✅ Отправить").WithCallbackData("broadcast_confirm"),
-			tu.InlineKeyboardButton("❌ Отменить").WithCallbackData("broadcast_cancel"),
+			tu.InlineKeyboardButton("✅ Отправить").WithCallbackData(constants.CbBroadcastConfirm),
+			tu.InlineKeyboardButton("❌ Отменить").WithCallbackData(constants.CbBroadcastCancel),
 		),
 	)
 
@@ -83,7 +85,7 @@ func (b *Bot) handleBroadcastConfirm(chatID int64, messageID int) {
 	b.editMessageText(chatID, messageID, "⏳ Отправка объявления...")
 
 	// Get all registered users
-	inbounds, err := b.apiClient.GetInbounds()
+	inbounds, err := b.apiClient.GetInbounds(context.Background())
 	if err != nil {
 		b.logger.Errorf("Failed to get inbounds for broadcast: %v", err)
 		b.editMessageText(chatID, messageID, "❌ Ошибка при получении списка пользователей")
@@ -94,9 +96,7 @@ func (b *Bot) handleBroadcastConfirm(chatID int64, messageID int) {
 			b.logger.Errorf("Failed to delete user state: %v", err)
 		}
 		return
-	}
-
-	// Collect unique Telegram IDs
+	} // Collect unique Telegram IDs
 	userIDs := make(map[int64]bool)
 	for _, inbound := range inbounds {
 		settings, ok := inbound["settings"].(string)
@@ -126,49 +126,80 @@ func (b *Bot) handleBroadcastConfirm(chatID int64, messageID int) {
 		}
 	}
 
-	// Send broadcast to all users
-	successCount := 0
-	failCount := 0
+	// Send broadcast in a cancellable goroutine to avoid blocking and allow cancellation
+	ctx, cancel := context.WithCancel(context.Background())
+	b.broadcastMutex.Lock()
+	if b.broadcastCancel != nil {
+		// There's an existing broadcast; cancel it first
+		b.broadcastCancel()
+	}
+	b.broadcastCancel = cancel
+	b.broadcastMutex.Unlock()
 
-	broadcastMsg := fmt.Sprintf("📢 <b>Объявление</b>\n\n%s", state.Message)
+	// Start goroutine to perform send loop
+	b.wg.Add(1)
+	go func(ctx context.Context) {
+		defer b.wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				b.logger.Errorf("Panic in broadcast goroutine: %v", r)
+			}
+		}()
+		successCount := 0
+		failCount := 0
+		broadcastMsg := fmt.Sprintf("📢 <b>Объявление</b>\n\n%s", state.Message)
 
-	for userID := range userIDs {
-		// Try to send message
-		_, err := b.bot.SendMessage(context.Background(), &telego.SendMessageParams{
-			ChatID:    tu.ID(userID),
-			Text:      broadcastMsg,
-			ParseMode: telego.ModeHTML,
-		})
-		if err != nil {
-			b.logger.Warnf("Failed to send broadcast to user %d: %v", userID, err)
-			failCount++
-		} else {
-			successCount++
+	BCAST_LOOP:
+		for userID := range userIDs {
+			select {
+			case <-ctx.Done():
+				b.logger.Infof("Broadcast cancelled by admin %d", chatID)
+				break BCAST_LOOP
+			default:
+			}
+
+			// Try to send message
+			_, err := b.bot.SendMessage(ctx, &telego.SendMessageParams{
+				ChatID:    tu.ID(userID),
+				Text:      broadcastMsg,
+				ParseMode: telego.ModeHTML,
+			})
+			if err != nil {
+				b.logger.Warnf("Failed to send broadcast to user %d: %v", userID, err)
+				failCount++
+			} else {
+				successCount++
+			}
+			time.Sleep(50 * time.Millisecond) // Rate limiting
 		}
-		time.Sleep(50 * time.Millisecond) // Rate limiting
-	}
 
-	// Update admin with results
-	resultMsg := fmt.Sprintf(
-		"✅ <b>Рассылка завершена</b>\n\n"+
-			"📊 Отправлено: %d\n"+
-			"❌ Ошибок: %d\n"+
-			"👥 Всего пользователей: %d",
-		successCount,
-		failCount,
-		len(userIDs),
-	)
-	b.editMessageText(chatID, messageID, resultMsg)
+		// Update admin with results
+		resultMsg := fmt.Sprintf(
+			"✅ <b>Рассылка завершена</b>\n\n"+
+				"📊 Отправлено: %d\n"+
+				"❌ Ошибок: %d\n"+
+				"👥 Всего пользователей: %d",
+			successCount,
+			failCount,
+			len(userIDs),
+		)
+		b.editMessageText(chatID, messageID, resultMsg)
 
-	// Clean up state
-	if err := b.deleteBroadcastState(chatID); err != nil {
-		b.logger.Errorf("Failed to delete broadcast state: %v", err)
-	}
-	if err := b.deleteUserState(chatID); err != nil {
-		b.logger.Errorf("Failed to delete user state: %v", err)
-	}
+		// Clean up state
+		if err := b.deleteBroadcastState(chatID); err != nil {
+			b.logger.Errorf("Failed to delete broadcast state: %v", err)
+		}
+		if err := b.deleteUserState(chatID); err != nil {
+			b.logger.Errorf("Failed to delete user state: %v", err)
+		}
+		b.logger.Infof("Broadcast completed by admin %d: %d sent, %d failed", chatID, successCount, failCount)
 
-	b.logger.Infof("Broadcast completed by admin %d: %d sent, %d failed", chatID, successCount, failCount)
+		// Reset cancellation function
+		b.broadcastMutex.Lock()
+		b.broadcastCancel = nil
+		b.broadcastMutex.Unlock()
+	}(ctx)
+	// The results and cleanup are handled asynchronously inside the goroutine above.
 }
 
 // handleBroadcastCancel cancels broadcast creation
@@ -179,6 +210,14 @@ func (b *Bot) handleBroadcastCancel(chatID int64, messageID int) {
 	if err := b.deleteUserState(chatID); err != nil {
 		b.logger.Errorf("Failed to delete user state: %v", err)
 	}
+
+	// Cancel active broadcast if any
+	b.broadcastMutex.Lock()
+	if b.broadcastCancel != nil {
+		b.broadcastCancel()
+		b.broadcastCancel = nil
+	}
+	b.broadcastMutex.Unlock()
 
 	b.editMessageText(chatID, messageID, "❌ Рассылка отменена")
 	b.logger.Infof("Broadcast cancelled by admin %d", chatID)
@@ -199,7 +238,7 @@ func (b *Bot) sendBackupToAdmins() {
 	b.logger.Info("Starting database backup...")
 
 	// Download backup from panel
-	backup, err := b.apiClient.GetDatabaseBackup()
+	backup, err := b.apiClient.GetDatabaseBackup(context.Background())
 	if err != nil {
 		b.logger.Errorf("Failed to download backup: %v", err)
 		for _, adminID := range b.config.Telegram.AdminIDs {

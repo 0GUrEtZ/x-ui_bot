@@ -19,7 +19,7 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 	b.logger.Infof("User %d requested subscription info", userID)
 
 	// Get client info
-	clientInfo, err := b.apiClient.GetClientByTgID(userID)
+	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), userID)
 	if err != nil {
 		b.sendMessage(chatID, "❌ Вы не зарегистрированы.\n\nДля получения VPN необходимо зарегистрироваться.")
 		// Start registration process - get user info from Telegram
@@ -43,7 +43,7 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 	}
 
 	// Get subscription link
-	subLink, err := b.apiClient.GetClientLink(email)
+	subLink, err := b.apiClient.GetClientLink(context.Background(), email)
 	if err != nil {
 		b.logger.Errorf("Failed to get subscription link: %v", err)
 		b.sendMessage(chatID, "❌ Не удалось получить ссылку. Попробуйте позже или обратитесь к администратору.")
@@ -64,7 +64,7 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 
 	// Get traffic stats
 	var up, down, total int64
-	traffic, err := b.apiClient.GetClientTraffics(email)
+	traffic, err := b.apiClient.GetClientTraffics(context.Background(), email)
 	if err == nil && traffic != nil {
 		if u, ok := traffic["up"].(float64); ok {
 			up = int64(u)
@@ -183,7 +183,7 @@ func (b *Bot) handleUpdateUsername(chatID int64, userID int64) {
 	b.logger.Infof("User %d requested username update", userID)
 
 	// Get client info to verify registration
-	clientInfo, err := b.apiClient.GetClientByTgID(userID)
+	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), userID)
 	if err != nil {
 		b.sendMessage(chatID, "❌ Вы не зарегистрированы в системе")
 		return
@@ -247,7 +247,7 @@ func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
 	b.clientService.FixNumericFields(clientData)
 
 	// Call UpdateClient with old email as identifier
-	err = b.apiClient.UpdateClient(inboundID, oldEmail, clientData)
+	err = b.apiClient.UpdateClient(context.Background(), inboundID, oldEmail, clientData)
 	if err != nil {
 		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка обновления: %v", err))
 		b.logger.Errorf("Failed to update username for user %d: %v", userID, err)

@@ -32,7 +32,7 @@ func (s *BroadcastService) SendBroadcast(message string) (sent int, failed int, 
 	s.logger.Info("Starting broadcast")
 
 	// Get all inbounds
-	inbounds, err := s.apiClient.GetInbounds()
+	inbounds, err := s.apiClient.GetInbounds(context.Background())
 	if err != nil {
 		return 0, 0, fmt.Errorf("failed to get inbounds: %w", err)
 	}

@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"html"
 	"math"
@@ -28,7 +29,7 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 		b.sendMessageWithKeyboard(chatID, msg, kb)
 	} else {
 		// Check if user is registered
-		clientInfo, err := b.apiClient.GetClientByTgID(chatID)
+		clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), chatID)
 		if err == nil && clientInfo != nil {
 			// User is registered - show client menu with subscription info
 			email := ""
@@ -52,7 +53,7 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 
 			// Get traffic stats
 			var total int64
-			traffic, err := b.apiClient.GetClientTraffics(email)
+			traffic, err := b.apiClient.GetClientTraffics(context.Background(), email)
 			if err == nil && traffic != nil {
 				if u, ok := traffic["up"].(float64); ok {
 					total += int64(u)
@@ -170,7 +171,7 @@ func (b *Bot) handleStatus(chatID int64, isAdmin bool) {
 		return
 	}
 
-	status, err := b.apiClient.GetStatus()
+	status, err := b.apiClient.GetStatus(context.Background())
 	if err != nil {
 		b.sendMessage(chatID, fmt.Sprintf("❌ Failed to get status: %v", err))
 		return
@@ -219,7 +220,7 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 		b.sendMessage(chatID, "⏳ Загружаю список клиентов...")
 	}
 
-	inbounds, err := b.apiClient.GetInbounds()
+	inbounds, err := b.apiClient.GetInbounds(context.Background())
 	if err != nil {
 		b.logger.Errorf("Failed to get inbounds: %v", err)
 		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка получения списка: %v", err))
@@ -297,7 +298,7 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 
 			// Get traffic info
 			trafficStr := ""
-			traffic, err := b.apiClient.GetClientTraffics(email)
+			traffic, err := b.apiClient.GetClientTraffics(context.Background(), email)
 			if err == nil && traffic != nil {
 				var up, down, total int64
 				if u, ok := traffic["up"].(float64); ok {
@@ -341,8 +342,8 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 				}
 			}
 
-			// Store client info for callback handling
-			b.clientCache.Store(fmt.Sprintf("%d_%d", inboundID, i), client)
+			// Store client info for callback handling (use safe store helper)
+			b.storeClientToCache(fmt.Sprintf("%d_%d", inboundID, i), client)
 
 			// Button text: status + email + username + traffic
 			buttonText := fmt.Sprintf("%s %s%s%s", statusEmoji, email, tgUsernameStr, trafficStr)

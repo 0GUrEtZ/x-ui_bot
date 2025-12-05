@@ -71,7 +71,7 @@ func (s *BackupService) Stop() {
 
 // PerformBackup performs a database backup and sends it to admins
 func (s *BackupService) PerformBackup() error {
-	dbFile, err := s.apiClient.GetDatabaseBackup()
+	dbFile, err := s.apiClient.GetDatabaseBackup(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to get database backup: %w", err)
 	}
