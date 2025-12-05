@@ -382,7 +382,9 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 			if err := b.apiClient.AddClient(context.Background(), inboundID, clientData); err != nil {
 				// Check if it's a duplicate email error - treat as success
 				errStr := err.Error()
-				if strings.Contains(errStr, "Duplicate email") || strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "already exists") {
+				b.logger.Infof("TEMP DEBUG: Processing error for inbound %d: '%s'", inboundID, errStr)
+				b.logger.Debugf("API error for inbound %d: %s", inboundID, errStr) // Debug log to see exact error
+				if strings.Contains(strings.ToLower(errStr), "duplicate") || strings.Contains(strings.ToLower(errStr), "already exists") || strings.Contains(errStr, "Duplicate email") {
 					b.logger.Infof("Client %s already exists in inbound %d (duplicate ignored)", req.Email, inboundID)
 					existedCount++
 				} else {
@@ -392,6 +394,9 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 				b.logger.Infof("Created client %s in inbound %d", req.Email, inboundID)
 				createdCount++
 			}
+
+			// Small delay between inbound creations to avoid race conditions
+			time.Sleep(100 * time.Millisecond)
 		}
 
 		if createdCount == 0 && existedCount == 0 {
