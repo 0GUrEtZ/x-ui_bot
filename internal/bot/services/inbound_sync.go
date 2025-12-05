@@ -109,7 +109,7 @@ func (s *InboundSyncService) SyncUserInbounds() error {
 
 			// Create client in this inbound
 			s.logger.Infof("Creating client %s (tgID: %d) in inbound %d", userInfo.Email, userInfo.TgID, inboundID)
-			
+
 			if err := s.createClientInInbound(userInfo, inbound); err != nil {
 				s.logger.Errorf("Failed to create client %s in inbound %d: %v", userInfo.Email, inboundID, err)
 				errorCount++
@@ -134,7 +134,7 @@ func (s *InboundSyncService) collectAllUsers(inbounds []map[string]interface{}) 
 		}
 
 		clients := s.parseClients(settingsStr)
-		
+
 		for _, clientData := range clients {
 			tgID := s.extractTgID(clientData)
 			if tgID == 0 {

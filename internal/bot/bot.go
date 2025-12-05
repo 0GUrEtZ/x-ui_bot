@@ -316,7 +316,7 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 	if b.config.Panel.MultiInboundNewUsers {
 		// Create client in ALL inbounds
 		b.logger.Infof("Creating client %s in all inbounds (multi-inbound mode)", req.Email)
-		
+
 		successCount := 0
 		for _, inbound := range inbounds {
 			inboundID := int(inbound["id"].(float64))
@@ -353,7 +353,7 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 		if successCount == 0 {
 			return fmt.Errorf("failed to create client in any inbound")
 		}
-		
+
 		b.logger.Infof("Successfully created client %s in %d/%d inbounds", req.Email, successCount, len(inbounds))
 		return nil
 	}
