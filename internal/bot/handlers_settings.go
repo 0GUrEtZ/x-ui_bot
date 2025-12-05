@@ -81,43 +81,68 @@ func (b *Bot) sendSubscriptionInfo(chatID int64, userID int64, email string, tit
 			}
 
 			// Find client with matching tgId
+			var matchedClient map[string]string
 			for _, client := range clients {
 				if client["tgId"] == fmt.Sprintf("%d", userID) {
-					// Get traffic for this inbound
-					clientEmail := client["email"]
-					traffic, err := b.apiClient.GetClientTraffics(context.Background(), clientEmail)
-					if err == nil && traffic != nil {
-						var up, down int64
-						if u, ok := traffic["up"].(float64); ok {
+					matchedClient = client
+					break
+				}
+			}
+
+			// If we found a matching client, get traffic for this inbound
+			if matchedClient != nil {
+				clientEmail := matchedClient["email"]
+
+				// Get all traffic for this inbound by ID
+				inboundIDInt := 0
+				if id, ok := inbound["id"].(float64); ok {
+					inboundIDInt = int(id)
+				}
+
+				traffics, err := b.apiClient.GetClientTrafficsById(context.Background(), inboundIDInt)
+				if err != nil {
+					continue
+				}
+
+				// Find traffic for our specific client email
+				var up, down int64
+				found := false
+				for _, trafficData := range traffics {
+					if email, ok := trafficData["email"].(string); ok && email == clientEmail {
+						if u, ok := trafficData["up"].(float64); ok {
 							up = int64(u)
 						}
-						if d, ok := traffic["down"].(float64); ok {
+						if d, ok := trafficData["down"].(float64); ok {
 							down = int64(d)
 						}
-						inboundTraffic := up + down
-						totalTraffic += inboundTraffic
-
-						// Extract inbound name
-						inboundName := ""
-						if remark, ok := inbound["remark"].(string); ok && remark != "" {
-							inboundName = remark
-						} else {
-							inboundName = fmt.Sprintf("Inbound %d", int(inbound["id"].(float64)))
-						}
-
-						// Calculate percentage for this inbound
-						percentage := 0.0
-						if totalGB > 0 {
-							percentage = (float64(inboundTraffic) / float64(totalGB)) * 100
-						}
-
-						inboundTraffics = append(inboundTraffics, InboundTraffic{
-							Name:       inboundName,
-							Traffic:    inboundTraffic,
-							Percentage: percentage,
-						})
+						found = true
+						break
 					}
-					break
+				}
+
+				if found {
+					inboundTraffic := up + down
+					totalTraffic += inboundTraffic
+
+					// Extract inbound name
+					inboundName := ""
+					if remark, ok := inbound["remark"].(string); ok && remark != "" {
+						inboundName = remark
+					} else {
+						inboundName = fmt.Sprintf("Inbound %d", inboundIDInt)
+					}
+
+					// Calculate percentage for this inbound
+					percentage := 0.0
+					if totalGB > 0 {
+						percentage = (float64(inboundTraffic) / float64(totalGB)) * 100
+					}
+
+					inboundTraffics = append(inboundTraffics, InboundTraffic{
+						Name:       inboundName,
+						Traffic:    inboundTraffic,
+						Percentage: percentage,
+					})
 				}
 			}
 		}
@@ -307,11 +332,15 @@ func (b *Bot) handleTrafficDetails(chatID int64, userID int64, messageID int) {
 		b.logger.Infof("Inbound %s has %d clients", inboundID, len(clients))
 
 		// Find client with matching tgId
+		var matchedClient map[string]string
 		for _, client := range clients {
 			clientTgID := client["tgId"]
 			b.logger.Debugf("Checking client: email=%s, tgId=%s (looking for %d)", client["email"], clientTgID, userID)
 
 			if clientTgID == fmt.Sprintf("%d", userID) {
+				matchedClient = client
+				b.logger.Infof("Found matching client: %s in inbound %s", client["email"], inboundID)
+
 				// Get total GB limit (same for all inbounds)
 				if totalGB == 0 {
 					if tgb := client["totalGB"]; tgb != "" && tgb != "0" {
@@ -320,52 +349,72 @@ func (b *Bot) handleTrafficDetails(chatID int64, userID int64, messageID int) {
 						}
 					}
 				}
+				break
+			}
+		}
 
-				// Get traffic for this inbound
-				clientEmail := client["email"]
-				b.logger.Infof("Found matching client: %s in inbound %s", clientEmail, inboundID)
+		// If we found a matching client, get traffic for this inbound
+		if matchedClient != nil {
+			clientEmail := matchedClient["email"]
 
-				traffic, err := b.apiClient.GetClientTraffics(context.Background(), clientEmail)
-				if err != nil {
-					b.logger.Errorf("Failed to get traffic for %s: %v", clientEmail, err)
-					break
-				}
-				if traffic != nil {
-					var up, down int64
-					if u, ok := traffic["up"].(float64); ok {
+			// Get all traffic for this inbound by ID
+			inboundIDInt := 0
+			if id, ok := inbound["id"].(float64); ok {
+				inboundIDInt = int(id)
+			}
+
+			traffics, err := b.apiClient.GetClientTrafficsById(context.Background(), inboundIDInt)
+			if err != nil {
+				b.logger.Errorf("Failed to get traffic for inbound %d: %v", inboundIDInt, err)
+				continue
+			}
+
+			// Find traffic for our specific client email
+			var up, down int64
+			found := false
+			for _, trafficData := range traffics {
+				if email, ok := trafficData["email"].(string); ok && email == clientEmail {
+					if u, ok := trafficData["up"].(float64); ok {
 						up = int64(u)
 					}
-					if d, ok := traffic["down"].(float64); ok {
+					if d, ok := trafficData["down"].(float64); ok {
 						down = int64(d)
 					}
-					inboundTraffic := up + down
-					totalTraffic += inboundTraffic
-					totalUp += up
-					totalDown += down
-
-					// Extract inbound name
-					inboundName := ""
-					if remark, ok := inbound["remark"].(string); ok && remark != "" {
-						inboundName = remark
-					} else {
-						inboundName = fmt.Sprintf("Inbound %d", int(inbound["id"].(float64)))
-					}
-
-					// Calculate percentage
-					percentage := 0.0
-					if totalGB > 0 {
-						percentage = (float64(inboundTraffic) / float64(totalGB)) * 100
-					}
-
-					inboundTraffics = append(inboundTraffics, InboundTrafficDetail{
-						Name:       inboundName,
-						Traffic:    inboundTraffic,
-						Up:         up,
-						Down:       down,
-						Percentage: percentage,
-					})
+					found = true
+					b.logger.Infof("Found traffic for %s: up=%d, down=%d", clientEmail, up, down)
+					break
 				}
-				break
+			}
+
+			if found {
+				inboundTraffic := up + down
+				totalTraffic += inboundTraffic
+				totalUp += up
+				totalDown += down
+
+				// Extract inbound name
+				inboundName := ""
+				if remark, ok := inbound["remark"].(string); ok && remark != "" {
+					inboundName = remark
+				} else {
+					inboundName = fmt.Sprintf("Inbound %d", inboundIDInt)
+				}
+
+				// Calculate percentage
+				percentage := 0.0
+				if totalGB > 0 {
+					percentage = (float64(inboundTraffic) / float64(totalGB)) * 100
+				}
+
+				inboundTraffics = append(inboundTraffics, InboundTrafficDetail{
+					Name:       inboundName,
+					Traffic:    inboundTraffic,
+					Up:         up,
+					Down:       down,
+					Percentage: percentage,
+				})
+			} else {
+				b.logger.Warnf("Traffic not found for email %s in inbound %d", clientEmail, inboundIDInt)
 			}
 		}
 	}
