@@ -141,7 +141,7 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 			"%s\n\n"+
 			"🔗 <b>Ваша VPN конфигурация:</b>\n"+
 			"<blockquote expandable>%s</blockquote>\n\n"+
-			"📲 QR-код для быстрого подключения отправлен ниже",
+			"📲 Отсканируйте QR-код выше в приложении VPN или используйте ссылку",
 		html.EscapeString(email),
 		statusIcon,
 		statusText,
@@ -158,25 +158,26 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 		),
 	)
 
-	// Send text message first
-	b.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
-
-	// Generate and send QR code
+	// Generate and send QR code with caption
 	qrCode, err := b.apiClient.GetClientQRCode(context.Background(), email)
 	if err != nil {
 		b.logger.Errorf("Failed to generate QR code for user %d: %v", userID, err)
-		b.sendMessage(chatID, "⚠️ Не удалось создать QR-код. Используйте ссылку выше для подключения.")
+		// Fallback to text-only message
+		b.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
 	} else {
-		// Send QR code as photo
+		// Send QR code as photo with full caption
 		photo := &telego.SendPhotoParams{
-			ChatID:  tu.ID(chatID),
-			Photo:   telego.InputFile{File: tu.NameReader(bytes.NewReader(qrCode), "qr_code.png")},
-			Caption: "📲 Отсканируйте QR-код в приложении VPN",
+			ChatID:      tu.ID(chatID),
+			Photo:       telego.InputFile{File: tu.NameReader(bytes.NewReader(qrCode), "qr_code.png")},
+			Caption:     msg,
+			ParseMode:   "HTML",
+			ReplyMarkup: keyboard,
 		}
 
 		if _, err := b.bot.SendPhoto(context.Background(), photo); err != nil {
 			b.logger.Errorf("Failed to send QR code to user %d: %v", userID, err)
-			b.sendMessage(chatID, "⚠️ Не удалось отправить QR-код. Используйте ссылку выше для подключения.")
+			// Fallback to text-only message
+			b.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
 		}
 	}
 
