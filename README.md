@@ -100,21 +100,24 @@ payment:
 **Automatic Monitoring:**
 - Collects server traffic data every 4 hours
 - Stores snapshots in SQLite database
-- Calculates monthly usage predictions
+- Calculates monthly usage predictions using precise hours-based algorithm
 - Sends smart alerts to admins
+
+**Interactive Dashboard:**
+- **Total Overview**: Shows aggregated forecast for all inbounds
+- **Drill-down Navigation**: Interactive buttons to view forecast for specific inbounds
+- **Real-time Updates**: Refresh data on demand
+- **Detailed Metrics**:
+  - Current month consumption
+  - Predicted total by month end
+  - Average daily usage
+  - Hours elapsed/remaining
 
 **Alert System:**
 - **Approach Warning**: Notifies at 90% of configured threshold
 - **Threshold Alert**: Notifies when forecast exceeds limit
 - **One-time Notifications**: Alerts only on threshold crossing (no spam)
 - Alerts reset when usage drops below threshold
-
-**Admin Dashboard:**
-- Current month consumption
-- Predicted total by month end
-- Average daily usage
-- Days elapsed/remaining
-- Last update timestamp
 
 **Configuration:**
 ```yaml
