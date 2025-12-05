@@ -17,18 +17,18 @@ import (
 
 // ForecastService collects traffic snapshots and calculates forecast
 type ForecastService struct {
-	apiClient        *client.APIClient
-	storage          storage.Storage
-	cfg              *config.Config
-	bot              *telego.Bot
-	log              *logger.Logger
-	ticker           *time.Ticker
-	stopChan         chan struct{}
-	closeOnce        sync.Once
-	alertedThreshold map[int]bool // per-inbound threshold alert state
-	alertedPercent   map[int]bool // per-inbound percent alert state
-	alertedTotalThreshold bool    // total traffic threshold alert state
-	alertedTotalPercent   bool    // total traffic percent alert state
+	apiClient             *client.APIClient
+	storage               storage.Storage
+	cfg                   *config.Config
+	bot                   *telego.Bot
+	log                   *logger.Logger
+	ticker                *time.Ticker
+	stopChan              chan struct{}
+	closeOnce             sync.Once
+	alertedThreshold      map[int]bool // per-inbound threshold alert state
+	alertedPercent        map[int]bool // per-inbound percent alert state
+	alertedTotalThreshold bool         // total traffic threshold alert state
+	alertedTotalPercent   bool         // total traffic percent alert state
 }
 
 // NewForecastService creates a new ForecastService
@@ -304,21 +304,28 @@ func (s *ForecastService) CalculateForecast(inboundID int) (*TrafficForecast, er
 		totalConsumed += delta
 	}
 
-	// Calculate average daily consumption
-	daysElapsed := int(now.Sub(monthStart).Hours() / 24)
-	if daysElapsed <= 0 {
-		daysElapsed = 1
-	}
-	averagePerDay := totalConsumed / int64(daysElapsed)
-
-	// Calculate days in month
-	daysInMonth := time.Date(year, month+1, 1, 0, 0, 0, 0, loc).AddDate(0, 0, -1).Day()
-	daysRemaining := daysInMonth - daysElapsed
-	if daysRemaining < 0 {
-		daysRemaining = 0
+	// Calculate forecast using hours for better precision
+	hoursElapsed := now.Sub(monthStart).Hours()
+	if hoursElapsed <= 0 {
+		hoursElapsed = 1 // Avoid division by zero
 	}
 
-	predictedTotal := totalConsumed + (averagePerDay * int64(daysRemaining))
+	// Calculate end of month
+	nextMonth := time.Date(year, month+1, 1, 0, 0, 0, 0, loc)
+	hoursInMonth := nextMonth.Sub(monthStart).Hours()
+	hoursRemaining := hoursInMonth - hoursElapsed
+	if hoursRemaining < 0 {
+		hoursRemaining = 0
+	}
+
+	bytesPerHour := float64(totalConsumed) / hoursElapsed
+	predictedTotal := totalConsumed + int64(bytesPerHour*hoursRemaining)
+	averagePerDay := int64(bytesPerHour * 24)
+
+	// For display purposes
+	daysInMonth := int(hoursInMonth / 24)
+	daysElapsed := int(hoursElapsed / 24)
+	daysRemaining := int(hoursRemaining / 24)
 
 	return &TrafficForecast{
 		CurrentTotal:   totalConsumed,
@@ -380,21 +387,28 @@ func (s *ForecastService) CalculateTotalForecast() (*TrafficForecast, error) {
 		return nil, fmt.Errorf("not enough data to build total forecast")
 	}
 
-	// Calculate average daily consumption
-	daysElapsed := int(now.Sub(monthStart).Hours() / 24)
-	if daysElapsed <= 0 {
-		daysElapsed = 1
-	}
-	averagePerDay := totalConsumed / int64(daysElapsed)
-
-	// Calculate days in month
-	daysInMonth := time.Date(year, month+1, 1, 0, 0, 0, 0, loc).AddDate(0, 0, -1).Day()
-	daysRemaining := daysInMonth - daysElapsed
-	if daysRemaining < 0 {
-		daysRemaining = 0
+	// Calculate forecast using hours for better precision
+	hoursElapsed := now.Sub(monthStart).Hours()
+	if hoursElapsed <= 0 {
+		hoursElapsed = 1 // Avoid division by zero
 	}
 
-	predictedTotal := totalConsumed + (averagePerDay * int64(daysRemaining))
+	// Calculate end of month
+	nextMonth := time.Date(year, month+1, 1, 0, 0, 0, 0, loc)
+	hoursInMonth := nextMonth.Sub(monthStart).Hours()
+	hoursRemaining := hoursInMonth - hoursElapsed
+	if hoursRemaining < 0 {
+		hoursRemaining = 0
+	}
+
+	bytesPerHour := float64(totalConsumed) / hoursElapsed
+	predictedTotal := totalConsumed + int64(bytesPerHour*hoursRemaining)
+	averagePerDay := int64(bytesPerHour * 24)
+
+	// For display purposes
+	daysInMonth := int(hoursInMonth / 24)
+	daysElapsed := int(hoursElapsed / 24)
+	daysRemaining := int(hoursRemaining / 24)
 
 	return &TrafficForecast{
 		CurrentTotal:   totalConsumed,

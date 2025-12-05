@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 	"time"
+	"x-ui-bot/internal/bot/constants"
 	"x-ui-bot/internal/bot/keyboard"
 
 	"github.com/mymmrac/telego"
@@ -389,6 +390,33 @@ func (b *Bot) handleForecast(chatID int64, isAdmin bool) {
 		return
 	}
 
-	message := b.forecastService.FormatForecastMessage(forecast)
-	b.sendMessage(chatID, message)
+	message := "🌐 <b>ОБЩИЙ ПРОГНОЗ ТРАФИКА</b>\n\n" + b.forecastService.FormatForecastMessage(forecast)
+
+	// Build keyboard with inbounds
+	inbounds, err := b.apiClient.GetInbounds(context.Background())
+	var keyboard *telego.InlineKeyboardMarkup
+	if err == nil {
+		var rows [][]telego.InlineKeyboardButton
+		for _, inbound := range inbounds {
+			id := 0
+			if v, ok := inbound["id"].(float64); ok {
+				id = int(v)
+			}
+			remark := fmt.Sprintf("Inbound %d", id)
+			if r, ok := inbound["remark"].(string); ok && r != "" {
+				remark = r
+			}
+
+			btn := tu.InlineKeyboardButton(fmt.Sprintf("📊 %s", remark)).
+				WithCallbackData(fmt.Sprintf("%s%d", constants.CbForecastInboundPrefix, id))
+			rows = append(rows, []telego.InlineKeyboardButton{btn})
+		}
+		// Add refresh button
+		rows = append(rows, []telego.InlineKeyboardButton{
+			tu.InlineKeyboardButton("🔄 Обновить").WithCallbackData(constants.CbForecastTotal),
+		})
+		keyboard = &telego.InlineKeyboardMarkup{InlineKeyboard: rows}
+	}
+
+	b.sendMessageWithInlineKeyboard(chatID, message, keyboard)
 }

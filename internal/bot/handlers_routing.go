@@ -710,9 +710,13 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		return nil
 	}
 
-	// Handle forecast_inbound_X callbacks
-	if strings.HasPrefix(data, "forecast_inbound_") {
-		b.handleForecastInboundCallback(chatID, query.ID, data)
+	// Handle forecast callbacks
+	if data == constants.CbForecastTotal {
+		b.handleForecastTotalCallback(chatID, messageID, query.ID)
+		return nil
+	}
+	if strings.HasPrefix(data, constants.CbForecastInboundPrefix) {
+		b.handleForecastInboundCallback(chatID, messageID, query.ID, data)
 		return nil
 	}
 
@@ -922,8 +926,52 @@ func (b *Bot) handleClientMenu(chatID int64, messageID int, inboundID int, clien
 	}
 }
 
+// handleForecastTotalCallback shows total forecast (back from inbound view)
+func (b *Bot) handleForecastTotalCallback(chatID int64, messageID int, callbackID string) {
+	forecast, err := b.forecastService.CalculateTotalForecast()
+	if err != nil {
+		b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: callbackID,
+			Text:            "❌ Ошибка расчета прогноза",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	message := "🌐 <b>ОБЩИЙ ПРОГНОЗ ТРАФИКА</b>\n\n" + b.forecastService.FormatForecastMessage(forecast)
+
+	// Build keyboard with inbounds
+	inbounds, err := b.apiClient.GetInbounds(context.Background())
+	var keyboard *telego.InlineKeyboardMarkup
+	if err == nil {
+		var rows [][]telego.InlineKeyboardButton
+		for _, inbound := range inbounds {
+			id := 0
+			if v, ok := inbound["id"].(float64); ok {
+				id = int(v)
+			}
+			remark := fmt.Sprintf("Inbound %d", id)
+			if r, ok := inbound["remark"].(string); ok && r != "" {
+				remark = r
+			}
+
+			btn := tu.InlineKeyboardButton(fmt.Sprintf("📊 %s", remark)).
+				WithCallbackData(fmt.Sprintf("%s%d", constants.CbForecastInboundPrefix, id))
+			rows = append(rows, []telego.InlineKeyboardButton{btn})
+		}
+		// Add refresh button
+		rows = append(rows, []telego.InlineKeyboardButton{
+			tu.InlineKeyboardButton("🔄 Обновить").WithCallbackData(constants.CbForecastTotal),
+		})
+		keyboard = &telego.InlineKeyboardMarkup{InlineKeyboard: rows}
+	}
+
+	b.editMessage(chatID, messageID, message, keyboard)
+	b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{CallbackQueryID: callbackID})
+}
+
 // handleForecastInboundCallback handles forecast_inbound_X callback
-func (b *Bot) handleForecastInboundCallback(chatID int64, callbackID string, data string) {
+func (b *Bot) handleForecastInboundCallback(chatID int64, messageID int, callbackID string, data string) {
 	// Parse inbound ID from callback data: forecast_inbound_X
 	parts := strings.Split(data, "_")
 	if len(parts) != 3 {
@@ -937,14 +985,25 @@ func (b *Bot) handleForecastInboundCallback(chatID int64, callbackID string, dat
 		return
 	}
 
-	// Answer callback to remove loading spinner
-	if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
-		CallbackQueryID: callbackID,
-		Text:            fmt.Sprintf("📊 Прогноз для инбаунда #%d", inboundID),
-	}); err != nil {
-		b.logger.Errorf("Failed to answer forecast callback: %v", err)
+	forecast, err := b.forecastService.CalculateForecast(inboundID)
+	if err != nil {
+		b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: callbackID,
+			Text:            fmt.Sprintf("❌ Ошибка: %v", err),
+			ShowAlert:       true,
+		})
+		return
 	}
 
-	// Show forecast for this inbound
-	b.handleTrafficForecastInbound(chatID, inboundID)
+	message := fmt.Sprintf("📊 <b>ПРОГНОЗ ДЛЯ INBOUND #%d</b>\n\n%s", inboundID, b.forecastService.FormatForecastMessage(forecast))
+
+	// Back button
+	keyboard := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("🔙 Назад к общему").WithCallbackData(constants.CbForecastTotal),
+		),
+	)
+
+	b.editMessage(chatID, messageID, message, keyboard)
+	b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{CallbackQueryID: callbackID})
 }

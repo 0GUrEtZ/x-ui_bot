@@ -2,17 +2,21 @@ package constants
 
 // Commands
 const (
-	CmdStart   = "start"
-	CmdHelp    = "help"
-	CmdStatus  = "status"
-	CmdID      = "id"
-	CmdUsage   = "usage"
-	CmdClients = "clients"
+	CmdStart    = "start"
+	CmdHelp     = "help"
+	CmdStatus   = "status"
+	CmdID       = "id"
+	CmdUsage    = "usage"
+	CmdClients  = "clients"
 	CmdForecast = "forecast"
 )
 
 // Callback Prefixes and Data
 const (
+	// Forecast
+	CbForecastTotal         = "forecast_total"
+	CbForecastInboundPrefix = "forecast_inbound_"
+
 	// Terms
 	CbTermsAccept  = "terms_accept"
 	CbTermsDecline = "terms_decline"
