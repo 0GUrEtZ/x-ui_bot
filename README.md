@@ -23,8 +23,6 @@ internal/
 pkg/client/           # 3X-UI HTTP API client
 ```
 
-Detailed architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
-
 ## Features
 
 **User Flow:**

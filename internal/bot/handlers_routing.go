@@ -16,7 +16,7 @@ import (
 )
 
 // handleMediaMessage handles media messages (photos, videos, documents, etc.)
-func (b *Bot) handleMediaMessage(ctx *th.Context, message telego.Message) error {
+func (b *Bot) handleMediaMessage(_ *th.Context, message telego.Message) error {
 	chatID := message.Chat.ID
 	userID := message.From.ID
 	isAdmin := b.authMiddleware.IsAdmin(userID)
