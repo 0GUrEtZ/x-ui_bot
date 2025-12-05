@@ -15,40 +15,19 @@ import (
 
 // Settings handlers for user settings: subscription info, settings menu, username update
 
-// handleMySubscription shows detailed subscription information for the user
-func (b *Bot) handleMySubscription(chatID int64, userID int64) {
-	b.logger.Infof("User %d requested subscription info", userID)
-
-	// Get client info
-	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), userID)
-	if err != nil {
-		b.sendMessage(chatID, "❌ Вы не зарегистрированы.\n\nДля получения VPN необходимо зарегистрироваться.")
-		// Start registration process - get user info from Telegram
-		userName, tgUsername := b.getUserInfo(userID)
-		// Remove @ prefix for storage
-		if tgUsername != "" && tgUsername[0] == '@' {
-			tgUsername = tgUsername[1:]
-		}
-		b.handleRegistrationStart(chatID, userID, userName, tgUsername)
-		return
-	}
-
-	email := ""
-	if e, ok := clientInfo["email"].(string); ok {
-		email = e
-	}
-
-	if email == "" {
-		b.sendMessage(chatID, "❌ Ошибка: не удалось получить информацию о клиенте")
-		return
-	}
-
+// sendSubscriptionInfo sends subscription details with QR code to user
+func (b *Bot) sendSubscriptionInfo(chatID int64, userID int64, email string, title string) error {
 	// Get subscription link
 	subLink, err := b.apiClient.GetClientLink(context.Background(), email)
 	if err != nil {
 		b.logger.Errorf("Failed to get subscription link: %v", err)
-		b.sendMessage(chatID, "❌ Не удалось получить ссылку. Попробуйте позже или обратитесь к администратору.")
-		return
+		return fmt.Errorf("не удалось получить ссылку: %w", err)
+	}
+
+	// Get client info for detailed stats
+	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), userID)
+	if err != nil {
+		return fmt.Errorf("не удалось получить информацию о клиенте: %w", err)
 	}
 
 	// Get expiry time
@@ -131,10 +110,8 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 		limitDevicesText = fmt.Sprintf("\n📱 Лимит устройств: %d", int(limitIP))
 	}
 
-	// Instructions URL removed - confirmation text included in welcome message
-
 	msg := fmt.Sprintf(
-		"📱 <b>Моя подписка</b>\n\n"+
+		"%s\n\n"+
 			"👤 Аккаунт: %s\n"+
 			"%s Статус: %s\n"+
 			"%s%s\n\n"+
@@ -142,6 +119,7 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 			"🔗 <b>Ваша VPN конфигурация:</b>\n"+
 			"<blockquote expandable>%s</blockquote>\n\n"+
 			"📲 Отсканируйте QR-код выше в приложении VPN или используйте ссылку",
+		title,
 		html.EscapeString(email),
 		statusIcon,
 		statusText,
@@ -179,6 +157,43 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 			// Fallback to text-only message
 			b.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
 		}
+	}
+
+	return nil
+}
+
+// handleMySubscription shows detailed subscription information for the user
+func (b *Bot) handleMySubscription(chatID int64, userID int64) {
+	b.logger.Infof("User %d requested subscription info", userID)
+
+	// Get client info
+	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), userID)
+	if err != nil {
+		b.sendMessage(chatID, "❌ Вы не зарегистрированы.\n\nДля получения VPN необходимо зарегистрироваться.")
+		// Start registration process - get user info from Telegram
+		userName, tgUsername := b.getUserInfo(userID)
+		// Remove @ prefix for storage
+		if tgUsername != "" && tgUsername[0] == '@' {
+			tgUsername = tgUsername[1:]
+		}
+		b.handleRegistrationStart(chatID, userID, userName, tgUsername)
+		return
+	}
+
+	email := ""
+	if e, ok := clientInfo["email"].(string); ok {
+		email = e
+	}
+
+	if email == "" {
+		b.sendMessage(chatID, "❌ Ошибка: не удалось получить информацию о клиенте")
+		return
+	}
+
+	// Send subscription info with QR code
+	if err := b.sendSubscriptionInfo(chatID, userID, email, "📱 <b>Моя подписка</b>"); err != nil {
+		b.sendMessage(chatID, fmt.Sprintf("❌ %s", err.Error()))
+		return
 	}
 
 	b.logger.Infof("Sent subscription info to user %d", userID)
