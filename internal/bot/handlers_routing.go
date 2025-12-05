@@ -92,6 +92,10 @@ func (b *Bot) handleCommand(ctx *th.Context, message telego.Message) error {
 	case constants.CmdID:
 		b.handleID(chatID, message.From.ID)
 	case constants.CmdUsage:
+		if !isAdmin {
+			b.sendMessage(chatID, "⛔ У вас нет прав")
+			return nil
+		}
 		if len(args) > 1 {
 			email := args[1]
 			b.handleUsage(chatID, email)

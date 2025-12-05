@@ -313,16 +313,27 @@ func (b *Bot) handleShowTerms(chatID int64, userID int64) {
 		return
 	}
 
-	keyboard := tu.InlineKeyboard(
-		tu.InlineKeyboardRow(
-			tu.InlineKeyboardButton("✅ Принять").WithCallbackData("terms_accept"),
-			tu.InlineKeyboardButton("❌ Отклонить").WithCallbackData("terms_decline"),
-		),
-	)
+	// Check if user is already registered
+	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), chatID)
+	isRegistered := err == nil && clientInfo != nil
+
+	var keyboard *telego.InlineKeyboardMarkup
+	text := string(terms)
+
+	if isRegistered {
+		text += "\n\n✅ Вы уже приняли эти условия."
+	} else {
+		keyboard = tu.InlineKeyboard(
+			tu.InlineKeyboardRow(
+				tu.InlineKeyboardButton("✅ Принять").WithCallbackData("terms_accept"),
+				tu.InlineKeyboardButton("❌ Отклонить").WithCallbackData("terms_decline"),
+			),
+		)
+	}
 
 	if _, err := b.bot.SendMessage(context.Background(), &telego.SendMessageParams{
 		ChatID:      tu.ID(chatID),
-		Text:        string(terms),
+		Text:        text,
 		ParseMode:   "Markdown",
 		ReplyMarkup: keyboard,
 	}); err != nil {
@@ -332,6 +343,21 @@ func (b *Bot) handleShowTerms(chatID int64, userID int64) {
 
 // handleTermsAccept handles terms acceptance
 func (b *Bot) handleTermsAccept(chatID int64, userID int64, messageID int, from *telego.User) {
+	// Check if user is already registered
+	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), chatID)
+	if err == nil && clientInfo != nil {
+		b.logger.Infof("User %d tried to accept terms but is already registered", userID)
+		b.sendMessage(chatID, "✅ Вы уже зарегистрированы.")
+
+		// Remove buttons from the message
+		_, _ = b.bot.EditMessageReplyMarkup(context.Background(), &telego.EditMessageReplyMarkupParams{
+			ChatID:      tu.ID(chatID),
+			MessageID:   messageID,
+			ReplyMarkup: nil,
+		})
+		return
+	}
+
 	b.logger.Infof("User %d accepted terms", userID)
 
 	// Update message
