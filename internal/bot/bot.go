@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -361,12 +362,6 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 				protocol = p
 			}
 
-			// Skip if client already exists in this inbound
-			if b.clientExistsInInbound(req.Email, inbound) {
-				existedCount++
-				continue
-			}
-
 			// Create client data with SAME subId for all inbounds
 			clientData := map[string]interface{}{
 				"email":      req.Email,
@@ -385,7 +380,14 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 
 			// Add client to this inbound
 			if err := b.apiClient.AddClient(context.Background(), inboundID, clientData); err != nil {
-				b.logger.Errorf("Failed to create client in inbound %d: %v", inboundID, err)
+				// Check if it's a duplicate email error - treat as success
+				errStr := err.Error()
+				if strings.Contains(errStr, "Duplicate email") || strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "already exists") {
+					b.logger.Infof("Client %s already exists in inbound %d (duplicate ignored)", req.Email, inboundID)
+					existedCount++
+				} else {
+					b.logger.Errorf("Failed to create client in inbound %d: %v", inboundID, err)
+				}
 			} else {
 				b.logger.Infof("Created client %s in inbound %d", req.Email, inboundID)
 				createdCount++
@@ -418,28 +420,6 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 
 	// Add client via API
 	return b.apiClient.AddClient(context.Background(), inboundID, clientData)
-}
-
-// clientExistsInInbound checks if client email already exists in given inbound
-func (b *Bot) clientExistsInInbound(email string, inbound map[string]interface{}) bool {
-	settingsStr := ""
-	if settings, ok := inbound["settings"].(string); ok {
-		settingsStr = settings
-	}
-
-	clients, err := b.clientService.ParseClients(settingsStr)
-	if err != nil {
-		b.logger.Errorf("Failed to parse clients for inbound %v: %v", inbound["id"], err)
-		return false
-	}
-
-	for _, c := range clients {
-		if c["email"] == email {
-			return true
-		}
-	}
-
-	return false
 }
 
 // subscriptionSyncScheduler periodically syncs subscription expiry data
