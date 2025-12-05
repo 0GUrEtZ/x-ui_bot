@@ -74,7 +74,7 @@ const (
 	BtnClientList         = "👥 Список клиентов"
 	BtnBroadcast          = "📢 Сделать объявление"
 	BtnBackupDB           = "💾 Бэкап БД"
-	BtnTerms              = "📋 Ознакомиться с условиями"
+	BtnTerms              = "📜 Ознакомиться с условиями"
 	BtnMySubscription     = "📱 Моя подписка и инструкции"
 	BtnInstructions       = "инструкции" // Keep for backward compatibility or partial match if needed
 	BtnExtendSubscription = "⏰ Продлить подписку"

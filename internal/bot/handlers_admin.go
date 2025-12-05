@@ -717,69 +717,41 @@ func (b *Bot) handleTrafficForecast(chatID int64) {
 		return
 	}
 
-	// Get list of inbounds
+	forecast, err := b.forecastService.CalculateTotalForecast()
+	if err != nil {
+		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка расчета прогноза: %v", err))
+		return
+	}
+
+	message := "🌐 <b>ОБЩИЙ ПРОГНОЗ ТРАФИКА</b>\n\n" + b.forecastService.FormatForecastMessage(forecast)
+
+	// Build keyboard with inbounds
 	inbounds, err := b.apiClient.GetInbounds(context.Background())
-	if err != nil {
-		b.logger.Errorf("Failed to get inbounds: %v", err)
-		b.sendMessage(chatID, "❌ Ошибка при получении списка инбаундов")
-		return
-	}
+	var keyboard *telego.InlineKeyboardMarkup
+	if err == nil {
+		var rows [][]telego.InlineKeyboardButton
+		for _, inbound := range inbounds {
+			id := 0
+			if v, ok := inbound["id"].(float64); ok {
+				id = int(v)
+			}
+			remark := fmt.Sprintf("Inbound %d", id)
+			if r, ok := inbound["remark"].(string); ok && r != "" {
+				remark = r
+			}
 
-	b.logger.Infof("Got %d inbounds", len(inbounds))
-
-	if len(inbounds) == 0 {
-		b.sendMessage(chatID, "❌ Нет доступных инбаундов")
-		return
-	}
-
-	// Build inline keyboard with inbound selection
-	var buttons [][]telego.InlineKeyboardButton
-	for _, inbound := range inbounds {
-		inboundID := 0
-		if v, ok := inbound["id"].(float64); ok {
-			inboundID = int(v)
+			btn := tu.InlineKeyboardButton(fmt.Sprintf("📊 %s", remark)).
+				WithCallbackData(fmt.Sprintf("%s%d", constants.CbForecastInboundPrefix, id))
+			rows = append(rows, []telego.InlineKeyboardButton{btn})
 		}
-		remark := fmt.Sprintf("Инбаунд #%d", inboundID)
-		if v, ok := inbound["remark"].(string); ok && v != "" {
-			remark = v
-		}
-
-		b.logger.Infof("Adding button for inbound %d: %s", inboundID, remark)
-
-		button := tu.InlineKeyboardButton(remark).
-			WithCallbackData(fmt.Sprintf("forecast_inbound_%d", inboundID))
-		buttons = append(buttons, []telego.InlineKeyboardButton{button})
+		// Add refresh button
+		rows = append(rows, []telego.InlineKeyboardButton{
+			tu.InlineKeyboardButton("🔄 Обновить").WithCallbackData(constants.CbForecastTotal),
+		})
+		keyboard = &telego.InlineKeyboardMarkup{InlineKeyboard: rows}
 	}
 
-	b.logger.Infof("Total buttons: %d", len(buttons))
-
-	keyboard := &telego.InlineKeyboardMarkup{
-		InlineKeyboard: buttons,
-	}
-
-	b.sendMessageWithInlineKeyboard(chatID, "📊 Выберите инбаунд для прогноза:", keyboard)
-}
-
-// handleTrafficForecastInbound handles callback to show forecast for specific inbound
-func (b *Bot) handleTrafficForecastInbound(chatID int64, inboundID int) {
-	if b.forecastService == nil {
-		b.sendMessage(chatID, "❌ Forecast service is not initialized")
-		return
-	}
-
-	forecast, err := b.forecastService.CalculateForecast(inboundID)
-	if err != nil {
-		if err.Error() == "not enough data to build forecast" {
-			b.sendMessage(chatID, "⚠️ Недостаточно данных для прогноза. Подождите несколько замеров.")
-			return
-		}
-		b.logger.Errorf("Failed to calculate forecast: %v", err)
-		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка при расчете прогноза: %v", err))
-		return
-	}
-
-	msg := b.forecastService.FormatForecastMessage(forecast)
-	b.sendMessage(chatID, msg)
+	b.sendMessageWithInlineKeyboard(chatID, message, keyboard)
 }
 
 // handleUserMediaSend handles sending media from user to admins
