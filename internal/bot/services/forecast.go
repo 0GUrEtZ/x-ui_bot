@@ -27,6 +27,8 @@ type ForecastService struct {
 	closeOnce        sync.Once
 	alertedThreshold map[int]bool // per-inbound threshold alert state
 	alertedPercent   map[int]bool // per-inbound percent alert state
+	alertedTotalThreshold bool    // total traffic threshold alert state
+	alertedTotalPercent   bool    // total traffic percent alert state
 }
 
 // NewForecastService creates a new ForecastService
@@ -100,6 +102,14 @@ func (s *ForecastService) CollectTrafficData() error {
 				s.log.Debugf("CalculateForecast for inbound %d: %v", inboundID, err)
 			}
 		}
+
+		// Check total traffic alerts
+		totalForecast, err := s.CalculateTotalForecast()
+		if err == nil {
+			s.evaluateTotalAlerts(totalForecast)
+		} else {
+			s.log.Debugf("CalculateTotalForecast: %v", err)
+		}
 	}
 	return nil
 }
@@ -164,6 +174,47 @@ func (s *ForecastService) evaluateAlerts(inboundID int, forecast *TrafficForecas
 	}
 	if s.alertedThreshold[inboundID] && forecast.PredictedTotal < thresholdBytes {
 		s.alertedThreshold[inboundID] = false
+	}
+}
+
+// evaluateTotalAlerts checks crossing thresholds for total traffic and sends notifications
+func (s *ForecastService) evaluateTotalAlerts(forecast *TrafficForecast) {
+	// Determine base threshold in bytes: prefer TrafficAlertThresholdGB; otherwise use TrafficLimitGB
+	thresholdGB := int64(s.cfg.Panel.TrafficAlertThresholdGB)
+	if thresholdGB <= 0 {
+		thresholdGB = int64(s.cfg.Panel.TrafficLimitGB)
+	}
+	if thresholdGB <= 0 {
+		// nothing to evaluate
+		return
+	}
+	thresholdBytes := thresholdGB * 1024 * 1024 * 1024
+
+	// Check percent threshold
+	percent := s.cfg.Panel.TrafficAlertPercent
+	if percent <= 0 {
+		percent = 90
+	}
+	percentBytes := thresholdBytes * int64(percent) / 100
+
+	// Crossing percent threshold for total traffic
+	if !s.alertedTotalPercent && forecast.PredictedTotal >= percentBytes {
+		alert := fmt.Sprintf("⚠️ ОБЩИЙ ТРАФИК: Прогноз достиг %d%% от порога (%d GB)\n\n%s", percent, thresholdGB, s.FormatForecastMessage(forecast))
+		s.notifyAdmins(alert)
+		s.alertedTotalPercent = true
+	}
+	if s.alertedTotalPercent && forecast.PredictedTotal < percentBytes {
+		s.alertedTotalPercent = false
+	}
+
+	// Crossing absolute threshold for total traffic
+	if !s.alertedTotalThreshold && forecast.PredictedTotal >= thresholdBytes {
+		alert := fmt.Sprintf("⚠️ ОБЩИЙ ТРАФИК: Прогноз превысил порог %d GB\n\n%s", thresholdGB, s.FormatForecastMessage(forecast))
+		s.notifyAdmins(alert)
+		s.alertedTotalThreshold = true
+	}
+	if s.alertedTotalThreshold && forecast.PredictedTotal < thresholdBytes {
+		s.alertedTotalThreshold = false
 	}
 }
 
@@ -253,38 +304,107 @@ func (s *ForecastService) CalculateForecast(inboundID int) (*TrafficForecast, er
 		totalConsumed += delta
 	}
 
-	// time span
-	duration := snapshots[len(snapshots)-1].Timestamp.Sub(snapshots[0].Timestamp)
-	hours := duration.Hours()
-	if hours <= 0 {
-		return nil, fmt.Errorf("invalid snapshot time range")
-	}
-	bytesPerHour := float64(totalConsumed) / hours
-
-	// Time to month end
-	nextMonth := monthStart.AddDate(0, 1, 0)
-	remainingHours := nextMonth.Sub(now).Hours()
-	predictedExtra := int64(bytesPerHour * remainingHours)
-
-	// Current total is the latest snapshot value (absolute counter)
-	currentTotal := snapshots[len(snapshots)-1].TotalBytes
-	predictedTotal := currentTotal + predictedExtra
-
-	daysInMonth := int(nextMonth.Sub(monthStart).Hours() / 24)
+	// Calculate average daily consumption
 	daysElapsed := int(now.Sub(monthStart).Hours() / 24)
-	daysRemaining := daysInMonth - daysElapsed
+	if daysElapsed <= 0 {
+		daysElapsed = 1
+	}
+	averagePerDay := totalConsumed / int64(daysElapsed)
 
-	forecast := &TrafficForecast{
-		CurrentTotal:   currentTotal,
+	// Calculate days in month
+	daysInMonth := time.Date(year, month+1, 1, 0, 0, 0, 0, loc).AddDate(0, 0, -1).Day()
+	daysRemaining := daysInMonth - daysElapsed
+	if daysRemaining < 0 {
+		daysRemaining = 0
+	}
+
+	predictedTotal := totalConsumed + (averagePerDay * int64(daysRemaining))
+
+	return &TrafficForecast{
+		CurrentTotal:   totalConsumed,
 		PredictedTotal: predictedTotal,
-		AveragePerDay:  int64(bytesPerHour * 24),
+		AveragePerDay:  averagePerDay,
 		DaysInMonth:    daysInMonth,
 		DaysElapsed:    daysElapsed,
 		DaysRemaining:  daysRemaining,
 		LastUpdate:     time.Now().UTC(),
+	}, nil
+}
+
+// CalculateTotalForecast builds a forecast for total traffic across all inbounds
+func (s *ForecastService) CalculateTotalForecast() (*TrafficForecast, error) {
+	now := time.Now().UTC()
+	year, month, _ := now.Date()
+	loc := time.UTC
+	monthStart := time.Date(year, month, 1, 0, 0, 0, 0, loc)
+
+	// Get all inbounds to sum their traffic
+	inbounds, err := s.apiClient.GetInbounds(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get inbounds: %w", err)
 	}
 
-	return forecast, nil
+	totalConsumed := int64(0)
+	totalSnapshots := 0
+
+	for _, inbound := range inbounds {
+		inboundID := 0
+		if id, ok := inbound["id"].(float64); ok {
+			inboundID = int(id)
+		}
+
+		snapshots, err := s.storage.GetTrafficSnapshots(inboundID, monthStart, now)
+		if err != nil {
+			s.log.Debugf("Failed to get snapshots for inbound %d: %v", inboundID, err)
+			continue
+		}
+		if len(snapshots) < 2 {
+			continue
+		}
+
+		// Compute total bytes consumed for this inbound
+		for i := 1; i < len(snapshots); i++ {
+			prev := snapshots[i-1]
+			curr := snapshots[i]
+			delta := curr.TotalBytes - prev.TotalBytes
+			if delta < 0 {
+				// Counter reset detected: treat delta as curr.TotalBytes
+				delta = curr.TotalBytes
+			}
+			totalConsumed += delta
+		}
+		totalSnapshots += len(snapshots) - 1 // number of deltas
+	}
+
+	if totalSnapshots < 2 {
+		return nil, fmt.Errorf("not enough data to build total forecast")
+	}
+
+	// Calculate average daily consumption
+	daysElapsed := int(now.Sub(monthStart).Hours() / 24)
+	if daysElapsed <= 0 {
+		daysElapsed = 1
+	}
+	averagePerDay := totalConsumed / int64(daysElapsed)
+
+	// Calculate days in month
+	daysInMonth := time.Date(year, month+1, 1, 0, 0, 0, 0, loc).AddDate(0, 0, -1).Day()
+	daysRemaining := daysInMonth - daysElapsed
+	if daysRemaining < 0 {
+		daysRemaining = 0
+	}
+
+	predictedTotal := totalConsumed + (averagePerDay * int64(daysRemaining))
+
+	return &TrafficForecast{
+		CurrentTotal:   totalConsumed,
+		PredictedTotal: predictedTotal,
+		AveragePerDay:  averagePerDay,
+		DaysInMonth:    daysInMonth,
+		DaysElapsed:    daysElapsed,
+		DaysRemaining:  daysRemaining,
+		LastUpdate:     time.Now().UTC(),
+	}, nil
 }
 
 // FormatBytes human-friendly format

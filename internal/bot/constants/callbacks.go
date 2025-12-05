@@ -8,6 +8,7 @@ const (
 	CmdID      = "id"
 	CmdUsage   = "usage"
 	CmdClients = "clients"
+	CmdForecast = "forecast"
 )
 
 // Callback Prefixes and Data

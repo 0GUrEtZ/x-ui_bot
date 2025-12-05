@@ -370,3 +370,25 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 
 	b.logger.Infof("Sent %d clients to user ID: %d", totalClients, chatID)
 }
+
+// handleForecast handles the /forecast command - shows total traffic forecast
+func (b *Bot) handleForecast(chatID int64, isAdmin bool) {
+	if !isAdmin {
+		b.sendMessage(chatID, "❌ Эта команда доступна только администраторам")
+		return
+	}
+
+	if b.forecastService == nil {
+		b.sendMessage(chatID, "❌ Сервис прогноза не инициализирован")
+		return
+	}
+
+	forecast, err := b.forecastService.CalculateTotalForecast()
+	if err != nil {
+		b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка расчета прогноза: %v", err))
+		return
+	}
+
+	message := b.forecastService.FormatForecastMessage(forecast)
+	b.sendMessage(chatID, message)
+}

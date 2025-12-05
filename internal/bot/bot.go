@@ -131,6 +131,7 @@ func (b *Bot) Start() error {
 			{Command: "status", Description: "Show server status"},
 			{Command: "id", Description: "Get your Telegram ID"},
 			{Command: "usage", Description: "Get client usage statistics"},
+			{Command: "forecast", Description: "Show total traffic forecast"},
 		},
 	})
 	if err != nil {

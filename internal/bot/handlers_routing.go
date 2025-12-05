@@ -100,6 +100,8 @@ func (b *Bot) handleCommand(ctx *th.Context, message telego.Message) error {
 		}
 	case constants.CmdClients:
 		b.handleClients(chatID, isAdmin)
+	case constants.CmdForecast:
+		b.handleForecast(chatID, isAdmin)
 	default:
 		// Check if it's a client action command: /client_enable_1_0 or /client_disable_1_0
 		if strings.HasPrefix(command, constants.CbClientPrefix) && isAdmin {
