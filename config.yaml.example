@@ -38,3 +38,6 @@ instructions:
 rate_limit:
   max_requests_per_minute: 10  # Maximum requests per user in the window
   window_seconds: 60  # Time window in seconds
+
+notifications:
+  expiry_warning_days: [7, 3, 1]  # Send warnings N days before subscription expiry

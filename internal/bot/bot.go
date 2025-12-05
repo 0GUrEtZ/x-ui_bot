@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -53,6 +54,7 @@ type Bot struct {
 	backupService       *services.BackupService
 	broadcastService    *services.BroadcastService
 	forecastService     *services.ForecastService
+	expiryNotifier      *services.ExpiryNotifierService
 
 	// Middleware
 	authMiddleware *middleware.AuthMiddleware
@@ -85,6 +87,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bo
 	backupService := services.NewBackupService(apiClient, bot, cfg, log)
 	broadcastService := services.NewBroadcastService(apiClient, bot, log)
 	forecastService := services.NewForecastService(apiClient, store, bot, cfg, log)
+	expiryNotifier := services.NewExpiryNotifierService(bot, store, log, cfg.Notifications.ExpiryWarningDays)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg)
@@ -101,6 +104,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bo
 		backupService:       backupService,
 		broadcastService:    broadcastService,
 		forecastService:     forecastService,
+		expiryNotifier:      expiryNotifier,
 		authMiddleware:      authMiddleware,
 		rateLimiter:         rateLimiter,
 		stopBackup:          make(chan struct{}),
@@ -147,6 +151,15 @@ func (b *Bot) Start() error {
 	// Start backup scheduler if enabled
 	if b.config.Panel.BackupDays > 0 {
 		go b.backupScheduler()
+	}
+
+	// Start expiry notifier
+	if len(b.config.Notifications.ExpiryWarningDays) > 0 {
+		ctx, cancel := context.WithCancel(context.Background())
+		b.cancel = cancel
+		go b.expiryNotifier.Start(ctx)
+		go b.subscriptionSyncScheduler(ctx)
+		b.logger.Info("Started expiry notifier and sync service")
 	}
 
 	return nil
@@ -302,6 +315,88 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 
 	// Add client via API
 	return b.apiClient.AddClient(context.Background(), inboundID, clientData)
+}
+
+// subscriptionSyncScheduler periodically syncs subscription expiry data
+func (b *Bot) subscriptionSyncScheduler(ctx context.Context) {
+	b.logger.Info("Subscription sync scheduler started")
+
+	// Sync immediately on start
+	if err := b.syncSubscriptionExpiry(); err != nil {
+		b.logger.Errorf("Failed to sync subscriptions: %v", err)
+	}
+
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			b.logger.Info("Stopping subscription sync scheduler")
+			return
+		case <-ticker.C:
+			if err := b.syncSubscriptionExpiry(); err != nil {
+				b.logger.Errorf("Failed to sync subscriptions: %v", err)
+			}
+		}
+	}
+}
+
+// syncSubscriptionExpiry syncs subscription expiry data to local database
+func (b *Bot) syncSubscriptionExpiry() error {
+	inbounds, err := b.apiClient.GetInbounds(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to get inbounds: %w", err)
+	}
+
+	for _, inbound := range inbounds {
+		settingsStr := ""
+		if settings, ok := inbound["settings"].(string); ok {
+			settingsStr = settings
+		}
+
+		clients, err := b.clientService.ParseClients(settingsStr)
+		if err != nil {
+			b.logger.Errorf("Failed to parse clients for inbound: %v", err)
+			continue
+		}
+
+		for _, client := range clients {
+			// Parse tgId
+			var tgID int64
+			if tgIDStr, ok := client["tgId"]; ok && tgIDStr != "" {
+				if val, err := strconv.ParseInt(tgIDStr, 10, 64); err == nil {
+					tgID = val
+				}
+			}
+
+			// Skip clients without telegram ID
+			if tgID == 0 {
+				continue
+			}
+
+			// Parse expiry time
+			var expiryTime int64
+			if expiryStr, ok := client["expiryTime"]; ok && expiryStr != "" {
+				if val, err := strconv.ParseInt(expiryStr, 10, 64); err == nil {
+					expiryTime = val
+				}
+			}
+
+			// Skip clients without expiry or expired
+			if expiryTime == 0 || expiryTime < time.Now().UnixMilli() {
+				continue
+			}
+
+			// Upsert to database
+			email := client["email"]
+			if err := b.storage.UpsertSubscriptionExpiry(email, tgID, expiryTime); err != nil {
+				b.logger.Errorf("Failed to upsert subscription expiry for %s: %v", email, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // backupScheduler periodically sends database backups to admins

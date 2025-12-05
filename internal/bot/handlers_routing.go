@@ -390,6 +390,17 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		}
 	}
 
+	// Handle extend subscription from notification (non-admin can use)
+	if data == "extend_subscription" {
+		b.handleExtensionMenu(chatID, userID, messageID)
+		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+		}); err != nil {
+			b.logger.Errorf("Failed to answer extend subscription callback: %v", err)
+		}
+		return nil
+	}
+
 	// Handle contact admin (non-admin can use)
 	if data == constants.CbContactAdmin {
 		b.handleContactAdmin(chatID, userID)

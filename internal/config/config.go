@@ -9,11 +9,12 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	Panel        PanelConfig        `yaml:"panel"`
-	Telegram     TelegramConfig     `yaml:"telegram"`
-	Payment      PaymentConfig      `yaml:"payment"`
-	Instructions InstructionsConfig `yaml:"instructions"`
-	RateLimit    RateLimitConfig    `yaml:"rate_limit"`
+	Panel         PanelConfig         `yaml:"panel"`
+	Telegram      TelegramConfig      `yaml:"telegram"`
+	Payment       PaymentConfig       `yaml:"payment"`
+	Instructions  InstructionsConfig  `yaml:"instructions"`
+	RateLimit     RateLimitConfig     `yaml:"rate_limit"`
+	Notifications NotificationsConfig `yaml:"notifications"`
 }
 
 // InstructionsConfig holds URLs for setup instructions
@@ -60,6 +61,11 @@ type PaymentConfig struct {
 	TrialText        string       `yaml:"trial_text"`
 	AutoApproveTrial bool         `yaml:"auto_approve_trial"`
 	Prices           PricesConfig `yaml:"prices"`
+}
+
+// NotificationsConfig holds notification settings
+type NotificationsConfig struct {
+	ExpiryWarningDays []int `yaml:"expiry_warning_days"` // Days before expiry to send warnings (e.g., [7, 3, 1])
 }
 
 // PricesConfig holds prices for different subscription periods

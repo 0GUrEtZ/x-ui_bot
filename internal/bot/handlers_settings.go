@@ -199,6 +199,60 @@ func (b *Bot) handleMySubscription(chatID int64, userID int64) {
 	b.logger.Infof("Sent subscription info to user %d", userID)
 }
 
+// handleExtensionMenu shows the extension request menu
+func (b *Bot) handleExtensionMenu(chatID int64, userID int64, messageID int) {
+	b.logger.Infof("User %d opened extension menu", userID)
+
+	// Get client info to show current subscription
+	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), userID)
+	if err != nil {
+		b.sendMessage(chatID, "❌ Вы не зарегистрированы в системе")
+		return
+	}
+
+	email := ""
+	if e, ok := clientInfo["email"].(string); ok {
+		email = e
+	}
+
+	// Get expiry time
+	expiryTime := time.Unix(0, 0)
+	if exp, ok := clientInfo["expiryTime"].(float64); ok {
+		expiryTime = time.UnixMilli(int64(exp))
+	}
+
+	msg := fmt.Sprintf(
+		"⏰ <b>Продление подписки</b>\n\n"+
+			"👤 Аккаунт: %s\n"+
+			"📅 Истекает: %s\n\n"+
+			"Выберите период продления:",
+		email,
+		expiryTime.Format("02.01.2006 15:04"),
+	)
+
+	keyboard := tu.InlineKeyboard(
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("📅 30 дней").WithCallbackData(fmt.Sprintf("extend_%d_30", userID)),
+		),
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("📅 60 дней").WithCallbackData(fmt.Sprintf("extend_%d_60", userID)),
+		),
+		tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton("📅 90 дней").WithCallbackData(fmt.Sprintf("extend_%d_90", userID)),
+		),
+	)
+
+	if _, err := b.bot.EditMessageText(context.Background(), &telego.EditMessageTextParams{
+		ChatID:      tu.ID(chatID),
+		MessageID:   messageID,
+		Text:        msg,
+		ParseMode:   "HTML",
+		ReplyMarkup: keyboard,
+	}); err != nil {
+		b.logger.Errorf("Failed to edit extension menu message: %v", err)
+	}
+}
+
 // handleSettings shows the settings menu for the user
 func (b *Bot) handleSettings(chatID int64, userID int64) {
 	b.logger.Infof("User %d opened settings", userID)

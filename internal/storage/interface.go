@@ -48,6 +48,14 @@ type TrafficSnapshot struct {
 	TotalBytes    int64
 }
 
+// ExpiringSubscription represents a subscription approaching expiry
+type ExpiringSubscription struct {
+	Email        string
+	TgID         int64
+	ExpiryTime   int64
+	NotifiedDays string // Comma-separated list of days already notified
+}
+
 // Storage defines the interface for state persistence
 type Storage interface {
 	// User states
@@ -81,6 +89,12 @@ type Storage interface {
 	GetTrafficSnapshots(inboundID int, startTime, endTime time.Time) ([]*TrafficSnapshot, error)
 	GetLatestTrafficSnapshot(inboundID int) (*TrafficSnapshot, error)
 	DeleteOldTrafficSnapshots(beforeTime time.Time) error
+
+	// Subscription expiry tracking
+	UpsertSubscriptionExpiry(email string, tgID int64, expiryTime int64) error
+	GetExpiringSubscriptions(daysThreshold int) ([]ExpiringSubscription, error)
+	MarkSubscriptionNotified(email string, daysNotified string) error
+	DeleteExpiredSubscriptions() error
 
 	// Cleanup
 	CleanupExpiredStates(maxAge time.Duration) error

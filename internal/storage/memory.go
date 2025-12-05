@@ -268,3 +268,24 @@ func (s *MemoryStorage) DeleteOldTrafficSnapshots(beforeTime time.Time) error {
 	s.trafficSnapshots = newList
 	return nil
 }
+
+// Subscription expiry tracking (stub implementations for in-memory storage)
+func (s *MemoryStorage) UpsertSubscriptionExpiry(email string, tgID int64, expiryTime int64) error {
+	// Not implemented for in-memory storage
+	return nil
+}
+
+func (s *MemoryStorage) GetExpiringSubscriptions(daysThreshold int) ([]ExpiringSubscription, error) {
+	// Not implemented for in-memory storage
+	return []ExpiringSubscription{}, nil
+}
+
+func (s *MemoryStorage) MarkSubscriptionNotified(email string, daysNotified string) error {
+	// Not implemented for in-memory storage
+	return nil
+}
+
+func (s *MemoryStorage) DeleteExpiredSubscriptions() error {
+	// Not implemented for in-memory storage
+	return nil
+}

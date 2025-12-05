@@ -78,6 +78,15 @@ func (s *SQLiteStorage) initialize() error {
 		total_bytes INTEGER NOT NULL
 	);
 	CREATE INDEX IF NOT EXISTS idx_traffic_inbound_timestamp ON traffic_snapshots(inbound_id, timestamp);
+
+	CREATE TABLE IF NOT EXISTS subscription_expiry (
+		email TEXT PRIMARY KEY,
+		tg_id INTEGER NOT NULL,
+		expiry_time INTEGER NOT NULL,
+		last_updated DATETIME NOT NULL,
+		notified_days TEXT DEFAULT ''
+	);
+	CREATE INDEX IF NOT EXISTS idx_expiry_time ON subscription_expiry(expiry_time);
 	`
 
 	_, err := s.db.Exec(schema)
@@ -295,6 +304,69 @@ func (s *SQLiteStorage) GetLatestTrafficSnapshot(inboundID int) (*TrafficSnapsho
 
 func (s *SQLiteStorage) DeleteOldTrafficSnapshots(beforeTime time.Time) error {
 	_, err := s.db.Exec("DELETE FROM traffic_snapshots WHERE timestamp < ?", beforeTime)
+	return err
+}
+
+// Subscription expiry tracking
+func (s *SQLiteStorage) UpsertSubscriptionExpiry(email string, tgID int64, expiryTime int64) error {
+	_, err := s.db.Exec(`
+		INSERT INTO subscription_expiry (email, tg_id, expiry_time, last_updated, notified_days)
+		VALUES (?, ?, ?, ?, '')
+		ON CONFLICT(email) DO UPDATE SET
+			tg_id = excluded.tg_id,
+			expiry_time = excluded.expiry_time,
+			last_updated = excluded.last_updated,
+			notified_days = CASE 
+				WHEN excluded.expiry_time != subscription_expiry.expiry_time THEN ''
+				ELSE subscription_expiry.notified_days
+			END
+	`, email, tgID, expiryTime, time.Now())
+	return err
+}
+
+func (s *SQLiteStorage) GetExpiringSubscriptions(daysThreshold int) ([]ExpiringSubscription, error) {
+	// Calculate threshold time
+	thresholdTime := time.Now().Add(time.Duration(daysThreshold) * 24 * time.Hour).UnixMilli()
+
+	rows, err := s.db.Query(`
+		SELECT email, tg_id, expiry_time, notified_days
+		FROM subscription_expiry
+		WHERE expiry_time > 0 
+		  AND expiry_time <= ?
+		  AND expiry_time > ?
+	`, thresholdTime, time.Now().UnixMilli())
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []ExpiringSubscription
+	for rows.Next() {
+		var sub ExpiringSubscription
+		if err := rows.Scan(&sub.Email, &sub.TgID, &sub.ExpiryTime, &sub.NotifiedDays); err != nil {
+			return nil, err
+		}
+		results = append(results, sub)
+	}
+	return results, rows.Err()
+}
+
+func (s *SQLiteStorage) MarkSubscriptionNotified(email string, daysNotified string) error {
+	_, err := s.db.Exec(`
+		UPDATE subscription_expiry 
+		SET notified_days = CASE
+			WHEN notified_days = '' THEN ?
+			WHEN instr(notified_days, ?) = 0 THEN notified_days || ',' || ?
+			ELSE notified_days
+		END
+		WHERE email = ?
+	`, daysNotified, daysNotified, daysNotified, email)
+	return err
+}
+
+func (s *SQLiteStorage) DeleteExpiredSubscriptions() error {
+	_, err := s.db.Exec("DELETE FROM subscription_expiry WHERE expiry_time > 0 AND expiry_time < ?", time.Now().UnixMilli())
 	return err
 }
 
