@@ -266,40 +266,11 @@ func (b *Bot) autoApproveRegistration(req *RegistrationRequest) {
 
 	req.Status = "approved"
 
-	// Get subscription link
-	subLink, err := b.apiClient.GetClientLink(context.Background(), req.Email)
-	if err != nil {
-		b.logger.Warnf("Failed to get subscription link: %v", err)
-		subLink = "Не удалось получить ссылку. Обратитесь к администратору."
+	// Send subscription info with QR code
+	if err := b.sendSubscriptionInfo(req.UserID, req.UserID, req.Email, "✅ <b>Ваш пробный аккаунт активирован!</b>"); err != nil {
+		b.logger.Errorf("Failed to send subscription info: %v", err)
+		b.sendMessage(req.UserID, fmt.Sprintf("✅ Аккаунт активирован!\n\n❌ Не удалось отправить данные подписки: %v\n\nОбратитесь к администратору.", err))
 	}
-
-	// Notify user with subscription link
-	limitDevicesText := ""
-	if b.config.Panel.LimitIP > 0 {
-		limitDevicesText = fmt.Sprintf("\n📱 Лимит устройств: %d", b.config.Panel.LimitIP)
-	}
-
-	userMsg := fmt.Sprintf(
-		"✅ <b>Ваш пробный аккаунт активирован!</b>\n\n"+
-			"👤 Аккаунт: %s\n"+
-			"📅 Срок: %d дней%s\n\n"+
-			"🔗 <b>Ваша VPN конфигурация:</b>\n"+
-			"<blockquote expandable>%s</blockquote>\n\n"+
-			"Скопируйте эту ссылку и добавьте её в ваше VPN приложение.",
-		html.EscapeString(req.Email),
-		req.Duration,
-		limitDevicesText,
-		html.EscapeString(subLink),
-	)
-
-	// Add instructions button
-	keyboard := tu.InlineKeyboard(
-		tu.InlineKeyboardRow(
-			tu.InlineKeyboardButton("📖 Инструкции").WithCallbackData("instructions_menu"),
-		),
-	)
-
-	b.sendMessageWithInlineKeyboard(req.UserID, userMsg, keyboard)
 
 	// Show main menu to the user after successful registration
 	time.Sleep(1 * time.Second)
