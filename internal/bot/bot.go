@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync"
@@ -306,6 +307,40 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 	// Generate subscription ID (16 lowercase alphanumeric characters)
 	subID := generateRandomString(16)
 
+	// If user already exists in any inbound, reuse their subId to avoid duplicates
+	if b.config.Panel.MultiInboundNewUsers {
+		for _, inbound := range inbounds {
+			settingsStr := ""
+			if settings, ok := inbound["settings"].(string); ok {
+				settingsStr = settings
+			}
+
+			clients, err := b.clientService.ParseClients(settingsStr)
+			if err != nil {
+				b.logger.Errorf("Failed to parse clients for inbound %v: %v", inbound["id"], err)
+				continue
+			}
+
+			for _, c := range clients {
+				email := c["email"]
+				if email == "" || email != req.Email {
+					continue
+				}
+
+				// Parse raw JSON to extract subId
+				rawJSON := c["_raw_json"]
+				var clientData map[string]interface{}
+				if err := json.Unmarshal([]byte(rawJSON), &clientData); err == nil {
+					if existingSub, ok := clientData["subId"].(string); ok && existingSub != "" {
+						subID = existingSub
+						b.logger.Infof("Reusing existing subId for user %s from inbound %v", req.Email, inbound["id"])
+						break
+					}
+				}
+			}
+		}
+	}
+
 	// Calculate traffic limit in bytes
 	trafficLimitBytes := int64(0)
 	if b.config.Panel.TrafficLimitGB > 0 {
@@ -317,12 +352,19 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 		// Create client in ALL inbounds
 		b.logger.Infof("Creating client %s in all inbounds (multi-inbound mode)", req.Email)
 
-		successCount := 0
+		createdCount := 0
+		existedCount := 0
 		for _, inbound := range inbounds {
 			inboundID := int(inbound["id"].(float64))
 			protocol := ""
 			if p, ok := inbound["protocol"].(string); ok {
 				protocol = p
+			}
+
+			// Skip if client already exists in this inbound
+			if b.clientExistsInInbound(req.Email, inbound) {
+				existedCount++
+				continue
 			}
 
 			// Create client data with SAME subId for all inbounds
@@ -346,15 +388,15 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 				b.logger.Errorf("Failed to create client in inbound %d: %v", inboundID, err)
 			} else {
 				b.logger.Infof("Created client %s in inbound %d", req.Email, inboundID)
-				successCount++
+				createdCount++
 			}
 		}
 
-		if successCount == 0 {
+		if createdCount == 0 && existedCount == 0 {
 			return fmt.Errorf("failed to create client in any inbound")
 		}
 
-		b.logger.Infof("Successfully created client %s in %d/%d inbounds", req.Email, successCount, len(inbounds))
+		b.logger.Infof("Multi-inbound result for %s: created %d, existed %d, total inbounds %d", req.Email, createdCount, existedCount, len(inbounds))
 		return nil
 	}
 
@@ -376,6 +418,28 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 
 	// Add client via API
 	return b.apiClient.AddClient(context.Background(), inboundID, clientData)
+}
+
+// clientExistsInInbound checks if client email already exists in given inbound
+func (b *Bot) clientExistsInInbound(email string, inbound map[string]interface{}) bool {
+	settingsStr := ""
+	if settings, ok := inbound["settings"].(string); ok {
+		settingsStr = settings
+	}
+
+	clients, err := b.clientService.ParseClients(settingsStr)
+	if err != nil {
+		b.logger.Errorf("Failed to parse clients for inbound %v: %v", inbound["id"], err)
+		return false
+	}
+
+	for _, c := range clients {
+		if c["email"] == email {
+			return true
+		}
+	}
+
+	return false
 }
 
 // subscriptionSyncScheduler periodically syncs subscription expiry data
