@@ -263,6 +263,8 @@ func (b *Bot) sendSubscriptionInfo(chatID int64, userID int64, email string, tit
 
 // handleTrafficDetails shows detailed traffic breakdown by inbound
 func (b *Bot) handleTrafficDetails(chatID int64, userID int64, messageID int) {
+	b.logger.Infof("User %d requested traffic details", userID)
+
 	// Collect traffic stats from ALL inbounds where user exists
 	type InboundTrafficDetail struct {
 		Name       string
@@ -278,11 +280,19 @@ func (b *Bot) handleTrafficDetails(chatID int64, userID int64, messageID int) {
 
 	inbounds, err := b.apiClient.GetInbounds(context.Background())
 	if err != nil {
+		b.logger.Errorf("Failed to get inbounds for traffic details: %v", err)
 		b.sendMessage(chatID, "❌ Ошибка загрузки данных")
 		return
 	}
 
+	b.logger.Infof("Found %d inbounds, searching for user %d", len(inbounds), userID)
+
 	for _, inbound := range inbounds {
+		inboundID := ""
+		if id, ok := inbound["id"].(float64); ok {
+			inboundID = fmt.Sprintf("%.0f", id)
+		}
+
 		settingsStr := ""
 		if settings, ok := inbound["settings"].(string); ok {
 			settingsStr = settings
@@ -290,12 +300,18 @@ func (b *Bot) handleTrafficDetails(chatID int64, userID int64, messageID int) {
 
 		clients, err := b.clientService.ParseClients(settingsStr)
 		if err != nil {
+			b.logger.Errorf("Failed to parse clients for inbound %s: %v", inboundID, err)
 			continue
 		}
 
+		b.logger.Infof("Inbound %s has %d clients", inboundID, len(clients))
+
 		// Find client with matching tgId
 		for _, client := range clients {
-			if client["tgId"] == fmt.Sprintf("%d", userID) {
+			clientTgID := client["tgId"]
+			b.logger.Debugf("Checking client: email=%s, tgId=%s (looking for %d)", client["email"], clientTgID, userID)
+
+			if clientTgID == fmt.Sprintf("%d", userID) {
 				// Get total GB limit (same for all inbounds)
 				if totalGB == 0 {
 					if tgb := client["totalGB"]; tgb != "" && tgb != "0" {
@@ -307,8 +323,14 @@ func (b *Bot) handleTrafficDetails(chatID int64, userID int64, messageID int) {
 
 				// Get traffic for this inbound
 				clientEmail := client["email"]
+				b.logger.Infof("Found matching client: %s in inbound %s", clientEmail, inboundID)
+
 				traffic, err := b.apiClient.GetClientTraffics(context.Background(), clientEmail)
-				if err == nil && traffic != nil {
+				if err != nil {
+					b.logger.Errorf("Failed to get traffic for %s: %v", clientEmail, err)
+					break
+				}
+				if traffic != nil {
 					var up, down int64
 					if u, ok := traffic["up"].(float64); ok {
 						up = int64(u)
@@ -349,9 +371,12 @@ func (b *Bot) handleTrafficDetails(chatID int64, userID int64, messageID int) {
 	}
 
 	if len(inboundTraffics) == 0 {
+		b.logger.Warnf("No traffic data found for user %d", userID)
 		b.sendMessage(chatID, "📊 Данные о трафике не найдены")
 		return
 	}
+
+	b.logger.Infof("Found traffic data for %d inbounds", len(inboundTraffics))
 
 	// Build detailed message
 	msg := "📊 <b>Детальная статистика трафика</b>\n\n"
