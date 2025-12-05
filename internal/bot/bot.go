@@ -354,21 +354,26 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 
 		createdCount := 0
 		existedCount := 0
-		
-		for idx, inbound := range inbounds {
+
+		for _, inbound := range inbounds {
 			inboundID := int(inbound["id"].(float64))
 			protocol := ""
 			if p, ok := inbound["protocol"].(string); ok {
 				protocol = p
 			}
 
-			// Add unique suffix to email for non-first inbounds to avoid duplicate errors
-			// Format: email##ibN where N is inbound ID
-			// The ##ib marker allows us to strip it when displaying to users
-			emailForInbound := req.Email
-			if idx > 0 {
-				emailForInbound = fmt.Sprintf("%s##ib%d", req.Email, inboundID)
+			// Get inbound remark (name)
+			inboundRemark := ""
+			if remark, ok := inbound["remark"].(string); ok {
+				inboundRemark = remark
 			}
+			if inboundRemark == "" {
+				inboundRemark = fmt.Sprintf("inbound%d", inboundID)
+			}
+
+			// Add inbound name suffix to email: email##remarkName
+			// This allows multiple clients with same base email across inbounds
+			emailForInbound := fmt.Sprintf("%s##%s", req.Email, inboundRemark)
 
 			// Create client data with SAME subId for all inbounds
 			clientData := map[string]interface{}{
@@ -426,29 +431,14 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 	return b.apiClient.AddClient(context.Background(), inboundID, clientData)
 }
 
-// stripInboundSuffix removes the ##ibN suffix from email if present
+// stripInboundSuffix removes the ##remarkName suffix from email if present
 func stripInboundSuffix(email string) string {
-	if idx := findSubstring(email, "##ib"); idx >= 0 {
-		return email[:idx]
+	for i := 0; i < len(email)-2; i++ {
+		if email[i] == '#' && email[i+1] == '#' {
+			return email[:i]
+		}
 	}
 	return email
-}
-
-// findSubstring returns the index of substr in s, or -1 if not found
-func findSubstring(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		match := true
-		for j := 0; j < len(substr); j++ {
-			if s[i+j] != substr[j] {
-				match = false
-				break
-			}
-		}
-		if match {
-			return i
-		}
-	}
-	return -1
 }
 
 // subscriptionSyncScheduler periodically syncs subscription expiry data

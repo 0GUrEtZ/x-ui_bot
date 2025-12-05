@@ -10,10 +10,10 @@ import (
 	"x-ui-bot/pkg/client"
 )
 
-// stripInboundSuffix removes the ##ibN suffix from email if present
+// stripInboundSuffix removes the ##remarkName suffix from email if present
 func stripInboundSuffix(email string) string {
-	for i := 0; i <= len(email)-4; i++ {
-		if email[i:i+4] == "##ib" {
+	for i := 0; i < len(email)-2; i++ {
+		if email[i] == '#' && email[i+1] == '#' {
 			return email[:i]
 		}
 	}
@@ -111,7 +111,7 @@ func (s *InboundSyncService) SyncUserInbounds() error {
 	for _, userInfo := range users {
 		// Track which inbounds already have this user
 		inboundsWithUser := make(map[int]bool)
-		
+
 		// First pass: find all inbounds where user exists
 		for _, inbound := range inbounds {
 			inboundID := int(inbound["id"].(float64))
@@ -168,7 +168,7 @@ func (s *InboundSyncService) collectAllUsers(inbounds []map[string]interface{}) 
 				// Strip ##ibN suffix from email
 				email := s.extractString(clientData, "email")
 				cleanEmail := stripInboundSuffix(email)
-				
+
 				users[tgID] = &UserClientInfo{
 					TgID:       tgID,
 					Email:      cleanEmail, // Use clean email without suffix
@@ -239,12 +239,17 @@ func (s *InboundSyncService) createClientInInbound(userInfo *UserClientInfo, inb
 		protocol = p
 	}
 
-	// Add unique suffix to email for non-first inbounds to avoid duplicate errors
-	// Format: email##ibN where N is inbound ID
-	emailForInbound := userInfo.Email
-	if inboundIndex > 0 {
-		emailForInbound = fmt.Sprintf("%s##ib%d", userInfo.Email, inboundID)
+	// Extract inbound remark (name) for suffix
+	inboundRemark := ""
+	if remark, ok := inbound["remark"].(string); ok && remark != "" {
+		inboundRemark = remark
+	} else {
+		inboundRemark = fmt.Sprintf("inbound%d", inboundID)
 	}
+
+	// Add unique suffix to email to avoid duplicate errors across inbounds
+	// Format: email##remarkName
+	emailForInbound := fmt.Sprintf("%s##%s", userInfo.Email, inboundRemark)
 
 	// Build client data with same parameters
 	clientData := map[string]interface{}{

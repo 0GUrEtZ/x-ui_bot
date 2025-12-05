@@ -233,18 +233,26 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 		return
 	}
 
-	// Build inline keyboard with all clients
-	var buttons [][]telego.InlineKeyboardButton
-	totalClients := 0
+	// Group clients by tgId to show unified view
+	type GroupedClient struct {
+		TgID          string
+		Email         string // Clean email without suffix
+		Username      string
+		Enable        bool // true if enabled in ANY inbound
+		IsExpired     bool
+		IsUnlimited   bool
+		TotalTraffic  int64
+		LimitBytes    float64
+		InboundIDs    []int // List of inbound IDs
+		ClientIndexes []int // Corresponding client indexes
+		InboundCount  int   // Number of inbounds
+	}
+
+	groupedClients := make(map[string]*GroupedClient) // key: tgId or clean email
+	clientCache := make(map[string]map[string]string) // key: "inboundID_clientIndex"
 
 	for _, inbound := range inbounds {
-		// Get inbound ID
-		inboundID := 0
-		if id, ok := inbound["id"].(float64); ok {
-			inboundID = int(id)
-		}
-
-		// Parse settings to get client configurations
+		inboundID := int(inbound["id"].(float64))
 		settingsStr := ""
 		if s, ok := inbound["settings"].(string); ok {
 			settingsStr = s
@@ -258,101 +266,149 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 			}).Error("Failed to parse clients")
 			continue
 		}
-		if len(clients) == 0 {
-			continue
-		}
 
-		// Create button for each client
 		for i, client := range clients {
-			totalClients++
+			tgId := client["tgId"]
 			email := client["email"]
-			enable := client["enable"]
-			totalGB := client["totalGB"]
-			expiryTime := client["expiryTime"]
+			cleanEmail := stripInboundSuffix(email)
 
-			// Check if subscription expired
-			isExpired := false
-			isUnlimited := false
-			if expiryTime != "" && expiryTime != "0" {
-				timestamp, err := strconv.ParseInt(expiryTime, 10, 64)
-				if err == nil && timestamp > 0 {
-					now := time.Now().UnixMilli()
-					if timestamp < now {
-						isExpired = true
+			// Use tgId as key, or clean email if no tgId
+			groupKey := tgId
+			if groupKey == "" || groupKey == "0" {
+				groupKey = "email_" + cleanEmail
+			}
+
+			// Store to cache for callback handling
+			cacheKey := fmt.Sprintf("%d_%d", inboundID, i)
+			clientCache[cacheKey] = client
+			b.storeClientToCache(cacheKey, client)
+
+			// Get or create grouped client
+			gc, exists := groupedClients[groupKey]
+			if !exists {
+				// Parse expiry and limits
+				isExpired := false
+				isUnlimited := false
+				expiryTime := client["expiryTime"]
+				if expiryTime != "" && expiryTime != "0" {
+					timestamp, err := strconv.ParseInt(expiryTime, 10, 64)
+					if err == nil && timestamp > 0 {
+						now := time.Now().UnixMilli()
+						if timestamp < now {
+							isExpired = true
+						}
+					}
+				} else {
+					isUnlimited = true
+				}
+
+				totalGB := client["totalGB"]
+				limitBytes := 0.0
+				if totalGB != "" && totalGB != "0" {
+					limitBytes, _ = strconv.ParseFloat(totalGB, 64)
+				}
+
+				// Get Telegram username
+				username := ""
+				if tgId != "" && tgId != "0" {
+					tgIDInt, err := strconv.ParseInt(tgId, 10, 64)
+					if err == nil && tgIDInt > 0 {
+						_, username = b.getUserInfo(tgIDInt)
 					}
 				}
+
+				gc = &GroupedClient{
+					TgID:          tgId,
+					Email:         cleanEmail,
+					Username:      username,
+					Enable:        client["enable"] == "true",
+					IsExpired:     isExpired,
+					IsUnlimited:   isUnlimited,
+					LimitBytes:    limitBytes,
+					InboundIDs:    []int{inboundID},
+					ClientIndexes: []int{i},
+					InboundCount:  1,
+				}
+				groupedClients[groupKey] = gc
 			} else {
-				isUnlimited = true
+				// Add to existing group
+				gc.InboundIDs = append(gc.InboundIDs, inboundID)
+				gc.ClientIndexes = append(gc.ClientIndexes, i)
+				gc.InboundCount++
+				// If enabled in ANY inbound, show as enabled
+				if client["enable"] == "true" {
+					gc.Enable = true
+				}
 			}
 
-			// Status emoji with subscription status
-			var statusEmoji string
-			if isExpired {
-				statusEmoji = "⛔" // Expired subscription
-			} else if enable == "false" {
-				statusEmoji = "🔴" // Blocked
-			} else if isUnlimited {
-				statusEmoji = "💎" // Unlimited subscription
-			} else {
-				statusEmoji = "🟢" // Active
-			}
-
-			// Get traffic info
-			trafficStr := ""
+			// Accumulate traffic from all inbounds
 			traffic, err := b.apiClient.GetClientTraffics(context.Background(), email)
 			if err == nil && traffic != nil {
-				var up, down, total int64
+				var up, down int64
 				if u, ok := traffic["up"].(float64); ok {
 					up = int64(u)
 				}
 				if d, ok := traffic["down"].(float64); ok {
 					down = int64(d)
 				}
-				total = up + down
-
-				// Show traffic with limit or unlimited
-				if totalGB != "" && totalGB != "0" {
-					// totalGB is already in bytes
-					limitBytes, _ := strconv.ParseFloat(totalGB, 64)
-					limitGB := limitBytes / (1024 * 1024 * 1024)
-
-					usedGB := float64(total) / (1024 * 1024 * 1024)
-
-					// Calculate percentage and round up
-					percentage := 0
-					if limitBytes > 0 {
-						percentage = int(math.Ceil((float64(total) / limitBytes) * 100))
-					}
-
-					trafficStr = fmt.Sprintf(" %.1fGB/%.0fGB (%d%%)", usedGB, limitGB, percentage)
-				} else {
-					// Unlimited traffic
-					trafficStr = " ∞"
-				}
+				gc.TotalTraffic += up + down
 			}
-
-			// Get Telegram username if exists
-			tgUsernameStr := ""
-			if tgId, ok := client["tgId"]; ok && tgId != "" && tgId != "0" {
-				tgIDInt, err := strconv.ParseInt(tgId, 10, 64)
-				if err == nil && tgIDInt > 0 {
-					_, username := b.getUserInfo(tgIDInt)
-					if username != "" {
-						tgUsernameStr = fmt.Sprintf(" %s", username)
-					}
-				}
-			}
-
-			// Store client info for callback handling (use safe store helper)
-			b.storeClientToCache(fmt.Sprintf("%d_%d", inboundID, i), client)
-
-			// Button text: status + email + username + traffic
-			buttonText := fmt.Sprintf("%s %s%s%s", statusEmoji, email, tgUsernameStr, trafficStr)
-			clientButton := tu.InlineKeyboardButton(buttonText).
-				WithCallbackData(fmt.Sprintf("client_%d_%d", inboundID, i))
-
-			buttons = append(buttons, []telego.InlineKeyboardButton{clientButton})
 		}
+	}
+
+	// Build buttons from grouped clients
+	var buttons [][]telego.InlineKeyboardButton
+	totalClients := 0
+
+	for _, gc := range groupedClients {
+		totalClients++
+
+		// Status emoji
+		var statusEmoji string
+		if gc.IsExpired {
+			statusEmoji = "⛔"
+		} else if !gc.Enable {
+			statusEmoji = "🔴"
+		} else if gc.IsUnlimited {
+			statusEmoji = "💎"
+		} else {
+			statusEmoji = "🟢"
+		}
+
+		// Traffic info
+		trafficStr := ""
+		if gc.LimitBytes > 0 {
+			limitGB := gc.LimitBytes / (1024 * 1024 * 1024)
+			usedGB := float64(gc.TotalTraffic) / (1024 * 1024 * 1024)
+			percentage := 0
+			if gc.LimitBytes > 0 {
+				percentage = int(math.Ceil((float64(gc.TotalTraffic) / gc.LimitBytes) * 100))
+			}
+			trafficStr = fmt.Sprintf(" %.1fGB/%.0fGB (%d%%)", usedGB, limitGB, percentage)
+		} else {
+			trafficStr = " ∞"
+		}
+
+		// Username
+		tgUsernameStr := ""
+		if gc.Username != "" {
+			tgUsernameStr = fmt.Sprintf(" %s", gc.Username)
+		}
+
+		// Inbound count indicator
+		inboundIndicator := ""
+		if gc.InboundCount > 1 {
+			inboundIndicator = fmt.Sprintf(" [%d🌐]", gc.InboundCount)
+		}
+
+		// Button text: status + email + username + inbound count + traffic
+		buttonText := fmt.Sprintf("%s %s%s%s%s", statusEmoji, gc.Email, tgUsernameStr, inboundIndicator, trafficStr)
+
+		// Use first inbound for callback (we'll handle all inbounds in the menu)
+		clientButton := tu.InlineKeyboardButton(buttonText).
+			WithCallbackData(fmt.Sprintf("client_%d_%d", gc.InboundIDs[0], gc.ClientIndexes[0]))
+
+		buttons = append(buttons, []telego.InlineKeyboardButton{clientButton})
 	}
 
 	if len(buttons) == 0 {

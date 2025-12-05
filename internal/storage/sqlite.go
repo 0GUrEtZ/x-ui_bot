@@ -339,7 +339,9 @@ func (s *SQLiteStorage) GetExpiringSubscriptions(daysThreshold int) ([]ExpiringS
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close() // Ignore error in defer
+	}()
 
 	var results []ExpiringSubscription
 	for rows.Next() {

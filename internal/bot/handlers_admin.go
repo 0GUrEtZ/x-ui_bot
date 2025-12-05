@@ -540,27 +540,56 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 	// Get user info from Telegram
 	userName, tgUsername := b.getUserInfo(userID)
 
-	// Find client by tgId
-	foundClient, inboundID, email, err := b.findClientByTgID(userID)
+	// Get all inbounds
+	inbounds, err := b.apiClient.GetInbounds(context.Background())
 	if err != nil {
+		b.sendMessage(adminChatID, fmt.Sprintf("❌ Ошибка получения списка инбаундов: %v", err))
+		b.logger.Errorf("Failed to get inbounds: %v", err)
+		return
+	}
+
+	// Find first client to get current expiry and calculate new expiry
+	var currentExpiry int64
+	var cleanEmail string
+	var foundFirstClient bool
+
+	for _, inbound := range inbounds {
+		settingsStr := ""
+		if settings, ok := inbound["settings"].(string); ok {
+			settingsStr = settings
+		}
+
+		clients, err := b.clientService.ParseClients(settingsStr)
+		if err != nil {
+			continue
+		}
+
+		// Find client with matching tgId
+		for _, client := range clients {
+			if client["tgId"] == fmt.Sprintf("%d", userID) {
+				rawJSON := client["_raw_json"]
+				var clientData map[string]interface{}
+				if err := json.Unmarshal([]byte(rawJSON), &clientData); err != nil {
+					continue
+				}
+
+				if et, ok := clientData["expiryTime"].(float64); ok {
+					currentExpiry = int64(et)
+				}
+				cleanEmail = stripInboundSuffix(client["email"])
+				foundFirstClient = true
+				break
+			}
+		}
+		if foundFirstClient {
+			break
+		}
+	}
+
+	if !foundFirstClient {
 		b.sendMessage(adminChatID, "❌ Ошибка: клиент не найден")
-		b.logger.Errorf("%v", err)
+		b.logger.Errorf("Client with tgID %d not found", userID)
 		return
-	}
-
-	// Parse raw JSON to preserve all fields
-	rawJSON := foundClient["_raw_json"]
-	var clientData map[string]interface{}
-	if err := json.Unmarshal([]byte(rawJSON), &clientData); err != nil {
-		b.sendMessage(adminChatID, "❌ Ошибка при обработке данных клиента")
-		b.logger.Errorf("Failed to parse client JSON: %v", err)
-		return
-	}
-
-	// Get current expiry time
-	currentExpiry := int64(0)
-	if et, ok := clientData["expiryTime"].(float64); ok {
-		currentExpiry = int64(et)
 	}
 
 	// Calculate new expiry time: add extension to CURRENT expiry (or to now if expired)
@@ -573,27 +602,64 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 	newExpiry := baseTime + (int64(duration) * 24 * 60 * 60 * 1000) // Add days in milliseconds
 
 	b.logger.Infof("Extending subscription for %s from %s by %d days to %s",
-		email,
+		cleanEmail,
 		time.UnixMilli(currentExpiry).Format("2006-01-02 15:04:05"),
 		duration,
 		time.UnixMilli(newExpiry).Format("2006-01-02 15:04:05"))
 
-	// Update only expiryTime field
-	clientData["expiryTime"] = newExpiry
+	// Update all clients with this tgId across all inbounds
+	updatedCount := 0
+	for _, inbound := range inbounds {
+		inboundID := int(inbound["id"].(float64))
+		settingsStr := ""
+		if settings, ok := inbound["settings"].(string); ok {
+			settingsStr = settings
+		}
 
-	// Fix numeric fields for proper type conversion
-	b.clientService.FixNumericFields(clientData)
+		clients, err := b.clientService.ParseClients(settingsStr)
+		if err != nil {
+			b.logger.Errorf("Failed to parse clients for inbound %d: %v", inboundID, err)
+			continue
+		}
 
-	// Update client via API
-	err = b.apiClient.UpdateClient(context.Background(), inboundID, email, clientData)
-	if err != nil {
-		b.sendMessage(adminChatID, fmt.Sprintf("❌ Ошибка при обновлении подписки: %v", err))
-		b.logger.Errorf("Failed to update client subscription: %v", err)
+		// Find client with matching tgId
+		for _, client := range clients {
+			if client["tgId"] == fmt.Sprintf("%d", userID) {
+				rawJSON := client["_raw_json"]
+				var clientData map[string]interface{}
+				if err := json.Unmarshal([]byte(rawJSON), &clientData); err != nil {
+					b.logger.Errorf("Failed to parse client JSON: %v", err)
+					continue
+				}
+
+				// Update expiryTime
+				clientData["expiryTime"] = newExpiry
+
+				// Fix numeric fields for proper type conversion
+				b.clientService.FixNumericFields(clientData)
+
+				// Update client via API
+				emailWithSuffix := client["email"]
+				err = b.apiClient.UpdateClient(context.Background(), inboundID, emailWithSuffix, clientData)
+				if err != nil {
+					b.logger.Errorf("Failed to update client in inbound %d: %v", inboundID, err)
+				} else {
+					b.logger.Infof("Updated expiry in inbound %d for %s", inboundID, emailWithSuffix)
+					updatedCount++
+				}
+			}
+		}
+	}
+
+	if updatedCount == 0 {
+		b.sendMessage(adminChatID, "❌ Ошибка: не удалось обновить ни один инбаунд")
 		return
 	}
 
+	b.logger.Infof("Successfully extended subscription in %d inbounds", updatedCount)
+
 	// Get subscription link
-	subLink, err := b.apiClient.GetClientLink(context.Background(), email)
+	subLink, err := b.apiClient.GetClientLink(context.Background(), cleanEmail)
 	if err != nil {
 		b.logger.Warnf("Failed to get subscription link: %v", err)
 		subLink = "Не удалось получить ссылку"
@@ -624,7 +690,7 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 			"📅 Осталось: %d дней %d часов%s\n\n"+
 			"🔗 <b>Ваша VPN конфигурация:</b>\n"+
 			"<blockquote expandable>%s</blockquote>",
-		html.EscapeString(email),
+		html.EscapeString(cleanEmail),
 		duration,
 		newExpiryFormatted,
 		daysUntilExpiry,
@@ -649,7 +715,7 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 			"⏰ Теперь до: %s",
 		html.EscapeString(userName),
 		tgUsernameStr,
-		html.EscapeString(email),
+		html.EscapeString(cleanEmail),
 		oldExpiry,
 		duration,
 		newExpiryFormatted,
@@ -657,7 +723,7 @@ func (b *Bot) handleExtensionApproval(userID int64, adminChatID int64, messageID
 	b.editMessageText(adminChatID, messageID, adminMsg)
 
 	b.logger.Infof("Subscription extended for user %d, email: %s, added: %d days, expires: %s",
-		userID, email, duration, newExpiryFormatted)
+		userID, cleanEmail, duration, newExpiryFormatted)
 }
 
 // handleExtensionRejection processes admin rejection for subscription extension

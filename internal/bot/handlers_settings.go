@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -110,11 +111,47 @@ func (b *Bot) sendSubscriptionInfo(chatID int64, userID int64, email string, tit
 		limitDevicesText = fmt.Sprintf("\n📱 Лимит устройств: %d", int(limitIP))
 	}
 
+	// Get list of inbounds where user exists
+	inboundsList := ""
+	if inbounds, err := b.apiClient.GetInbounds(context.Background()); err == nil {
+		var inboundNames []string
+		for _, inbound := range inbounds {
+			settingsStr := ""
+			if settings, ok := inbound["settings"].(string); ok {
+				settingsStr = settings
+			}
+
+			clients, err := b.clientService.ParseClients(settingsStr)
+			if err != nil {
+				continue
+			}
+
+			// Check if user exists in this inbound
+			for _, client := range clients {
+				if client["tgId"] == fmt.Sprintf("%d", userID) {
+					// Extract inbound name
+					inboundName := ""
+					if remark, ok := inbound["remark"].(string); ok && remark != "" {
+						inboundName = remark
+					} else {
+						inboundName = fmt.Sprintf("Inbound %d", int(inbound["id"].(float64)))
+					}
+					inboundNames = append(inboundNames, inboundName)
+					break
+				}
+			}
+		}
+
+		if len(inboundNames) > 0 {
+			inboundsList = fmt.Sprintf("\n🌐 Серверы: %s", html.EscapeString(strings.Join(inboundNames, ", ")))
+		}
+	}
+
 	msg := fmt.Sprintf(
 		"%s\n\n"+
 			"👤 Аккаунт: %s\n"+
 			"%s Статус: %s\n"+
-			"%s%s\n\n"+
+			"%s%s%s\n\n"+
 			"%s\n\n"+
 			"🔗 <b>Ваша VPN конфигурация:</b>\n"+
 			"<blockquote expandable>%s</blockquote>\n\n"+
@@ -125,6 +162,7 @@ func (b *Bot) sendSubscriptionInfo(chatID int64, userID int64, email string, tit
 		statusText,
 		expiryText,
 		limitDevicesText,
+		inboundsList,
 		trafficInfo,
 		html.EscapeString(subLink),
 	)
@@ -300,6 +338,12 @@ func (b *Bot) handleUpdateUsername(chatID int64, userID int64) {
 func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
 	b.logger.Infof("User %d updating username to: %s", userID, newEmail)
 
+	// Check for ## suffix - forbidden for user input
+	if strings.Contains(newEmail, "##") {
+		b.sendMessage(chatID, "❌ Username не может содержать символы ##\n\nЭто служебные символы системы.\n\nВведите новый username:")
+		return
+	}
+
 	// Validate username length (3-32 characters, count actual characters not bytes)
 	usernameLength := utf8.RuneCountInString(newEmail)
 	if usernameLength < 3 {
@@ -325,7 +369,7 @@ func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
 	updatedCount := 0
 	oldEmailClean := ""
 
-	for idx, inbound := range inbounds {
+	for _, inbound := range inbounds {
 		inboundID := int(inbound["id"].(float64))
 		settingsStr := ""
 		if settings, ok := inbound["settings"].(string); ok {
@@ -355,13 +399,17 @@ func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
 					oldEmailClean = stripInboundSuffix(oldEmailWithSuffix)
 				}
 
-				// Build new email with appropriate suffix for this inbound
-				newEmailForInbound := newEmail
-				if idx > 0 {
-					newEmailForInbound = fmt.Sprintf("%s##ib%d", newEmail, inboundID)
+				// Extract inbound remark (name) for suffix
+				inboundRemark := ""
+				if remark, ok := inbound["remark"].(string); ok && remark != "" {
+					inboundRemark = remark
+				} else {
+					inboundRemark = fmt.Sprintf("inbound%d", inboundID)
 				}
 
-				// Update email field
+				// Build new email with appropriate suffix for this inbound
+				// Format: email##remarkName
+				newEmailForInbound := fmt.Sprintf("%s##%s", newEmail, inboundRemark) // Update email field
 				clientData["email"] = newEmailForInbound
 
 				// Fix numeric fields

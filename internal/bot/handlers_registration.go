@@ -60,6 +60,12 @@ func (b *Bot) handleRegistrationEmail(chatID int64, userID int64, email string) 
 		return
 	}
 
+	// Check for ## suffix - forbidden for user input
+	if strings.Contains(email, "##") {
+		b.sendMessage(chatID, "❌ Username не может содержать символы ##\n\nЭто служебные символы системы.\n\nВведите другой username:")
+		return
+	}
+
 	// Validate username length (3-32 characters, count actual characters not bytes)
 	usernameLength := utf8.RuneCountInString(email)
 	if usernameLength < 3 {

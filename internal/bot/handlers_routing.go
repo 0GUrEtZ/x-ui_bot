@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"math"
@@ -527,25 +528,75 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 			if err1 == nil && err2 == nil {
 				cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
 				if client, ok := b.getClientFromCacheCopy(cacheKey); ok {
+					tgIDStr := client["tgId"]
 					email := client["email"]
-					clientID := client["id"] // UUID for VMESS/VLESS
+					cleanEmail := stripInboundSuffix(email)
 
-					// Delete the client using UUID
-					err := b.apiClient.DeleteClient(context.Background(), inboundID, clientID)
+					// Delete from ALL inbounds where this user exists
+					deletedCount := 0
+					var deleteErrors []string
 
+					// Get all inbounds
+					inbounds, err := b.apiClient.GetInbounds(context.Background())
 					if err != nil {
 						if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 							CallbackQueryID: query.ID,
-							Text:            fmt.Sprintf("❌ Ошибка удаления: %v", err),
+							Text:            fmt.Sprintf("❌ Ошибка получения инбаундов: %v", err),
+							ShowAlert:       true,
+						}); err != nil {
+							b.logger.Errorf("Failed to answer delete error callback: %v", err)
+						}
+						return nil
+					}
+
+					// Find and delete from all inbounds
+					for _, inbound := range inbounds {
+						ibID := int(inbound["id"].(float64))
+						settingsStr := ""
+						if settings, ok := inbound["settings"].(string); ok {
+							settingsStr = settings
+						}
+
+						clients, err := b.clientService.ParseClients(settingsStr)
+						if err != nil {
+							continue
+						}
+
+						// Find client with matching tgId
+						for _, c := range clients {
+							if c["tgId"] == tgIDStr {
+								clientID := c["id"] // UUID for VMESS/VLESS
+								err := b.apiClient.DeleteClient(context.Background(), ibID, clientID)
+								if err != nil {
+									deleteErrors = append(deleteErrors, fmt.Sprintf("inbound %d: %v", ibID, err))
+									b.logger.Errorf("Failed to delete client from inbound %d: %v", ibID, err)
+								} else {
+									deletedCount++
+									b.logger.Infof("Deleted client %s from inbound %d", c["email"], ibID)
+								}
+								break
+							}
+						}
+					}
+
+					// Report result
+					if deletedCount == 0 {
+						if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+							CallbackQueryID: query.ID,
+							Text:            fmt.Sprintf("❌ Не удалось удалить клиента: %s", strings.Join(deleteErrors, "; ")),
 							ShowAlert:       true,
 						}); err != nil {
 							b.logger.Errorf("Failed to answer delete error callback: %v", err)
 						}
 					} else {
-						// Answer callback
+						resultText := fmt.Sprintf("🗑️ Клиент %s удалён из %d инбаундов", cleanEmail, deletedCount)
+						if len(deleteErrors) > 0 {
+							resultText += fmt.Sprintf("\n\nОшибки: %s", strings.Join(deleteErrors, "; "))
+						}
+
 						if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 							CallbackQueryID: query.ID,
-							Text:            fmt.Sprintf("🗑️ Клиент %s удалён", email),
+							Text:            resultText,
 						}); err != nil {
 							b.logger.Errorf("Failed to answer delete success callback: %v", err)
 						}
@@ -658,7 +709,7 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		}
 	}
 
-	// Handle toggle_X_Y buttons
+	// Handle toggle_X_Y buttons - toggle across ALL inbounds
 	if strings.HasPrefix(data, "toggle_") {
 		parts := strings.Split(data, "_")
 		if len(parts) == 3 {
@@ -668,48 +719,126 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 			if err1 == nil && err2 == nil {
 				cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
 				if client, ok := b.getClientFromCacheCopy(cacheKey); ok {
-					email := client["email"]
-					enable := client["enable"]
+					tgIDStr := client["tgId"]
 
-					// Toggle the enable state
-					var err error
-					var resultMsg string
-					if enable == "false" {
-						err = b.clientService.EnableClient(inboundID, email, client)
-						resultMsg = "✅ Клиент разблокирован"
-					} else {
-						err = b.clientService.DisableClient(inboundID, email, client)
-						resultMsg = "🔒 Клиент заблокирован"
-					}
+					// Determine target state: if ANY inbound is enabled, we'll disable all; otherwise enable all
+					shouldEnable := true
 
+					// Find all clients with same tgId
+					inbounds, err := b.apiClient.GetInbounds(context.Background())
 					if err != nil {
 						if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 							CallbackQueryID: query.ID,
-							Text:            fmt.Sprintf("❌ Ошибка: %v", err),
+							Text:            fmt.Sprintf("❌ Ошибка получения инбаундов: %v", err),
 							ShowAlert:       true,
 						}); err != nil {
 							b.logger.Errorf("Failed to answer toggle error callback: %v", err)
 						}
-					} else {
-						// Update enable status in cache immediately (safe update)
-						var newEnable string
-						if enable == "false" {
-							newEnable = "true"
-						} else {
-							newEnable = "false"
-						}
-						b.updateClientField(cacheKey, "enable", newEnable)
-
-						// Answer callback with text
-						if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
-							CallbackQueryID: query.ID,
-							Text:            resultMsg,
-						}); err != nil {
-							b.logger.Errorf("Failed to answer toggle success callback: %v", err)
-						}
-						// Refresh client menu with updated data
-						b.handleClientMenu(chatID, messageID, inboundID, clientIndex, query.ID)
+						return nil
 					}
+
+					// First pass: check if any is enabled
+					for _, inbound := range inbounds {
+						settingsStr := ""
+						if settings, ok := inbound["settings"].(string); ok {
+							settingsStr = settings
+						}
+
+						clients, err := b.clientService.ParseClients(settingsStr)
+						if err != nil {
+							continue
+						}
+
+						for _, c := range clients {
+							if c["tgId"] == tgIDStr && tgIDStr != "" && tgIDStr != "0" {
+								if c["enable"] == "true" {
+									shouldEnable = false // Found enabled instance, so we'll disable all
+									break
+								}
+							}
+						}
+						if !shouldEnable {
+							break
+						}
+					}
+
+					// Second pass: toggle all instances
+					toggledCount := 0
+					var toggleErrors []string
+
+					for _, inbound := range inbounds {
+						ibID := int(inbound["id"].(float64))
+						settingsStr := ""
+						if settings, ok := inbound["settings"].(string); ok {
+							settingsStr = settings
+						}
+
+						clients, err := b.clientService.ParseClients(settingsStr)
+						if err != nil {
+							continue
+						}
+
+						for idx, c := range clients {
+							if c["tgId"] == tgIDStr && tgIDStr != "" && tgIDStr != "0" {
+								// Parse raw JSON
+								rawJSON := c["_raw_json"]
+								var clientData map[string]interface{}
+								if err := json.Unmarshal([]byte(rawJSON), &clientData); err != nil {
+									toggleErrors = append(toggleErrors, fmt.Sprintf("inbound %d: parse error", ibID))
+									continue
+								}
+
+								var err error
+								if shouldEnable {
+									err = b.clientService.EnableClient(ibID, c["email"], c)
+								} else {
+									err = b.clientService.DisableClient(ibID, c["email"], c)
+								}
+
+								if err != nil {
+									toggleErrors = append(toggleErrors, fmt.Sprintf("inbound %d: %v", ibID, err))
+									b.logger.Errorf("Failed to toggle client in inbound %d: %v", ibID, err)
+								} else {
+									toggledCount++
+									b.logger.Infof("Toggled client %s in inbound %d (enable: %v)", c["email"], ibID, shouldEnable)
+
+									// Update cache
+									ck := fmt.Sprintf("%d_%d", ibID, idx)
+									if shouldEnable {
+										b.updateClientField(ck, "enable", "true")
+									} else {
+										b.updateClientField(ck, "enable", "false")
+									}
+								}
+								break
+							}
+						}
+					}
+
+					// Report result
+					var resultMsg string
+					if toggledCount == 0 {
+						resultMsg = fmt.Sprintf("❌ Не удалось изменить статус: %s", strings.Join(toggleErrors, "; "))
+					} else {
+						if shouldEnable {
+							resultMsg = fmt.Sprintf("✅ Разблокировано в %d инбаундах", toggledCount)
+						} else {
+							resultMsg = fmt.Sprintf("🔒 Заблокировано в %d инбаундах", toggledCount)
+						}
+						if len(toggleErrors) > 0 {
+							resultMsg += fmt.Sprintf("\nОшибки: %s", strings.Join(toggleErrors, "; "))
+						}
+					}
+
+					if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+						CallbackQueryID: query.ID,
+						Text:            resultMsg,
+					}); err != nil {
+						b.logger.Errorf("Failed to answer toggle success callback: %v", err)
+					}
+
+					// Refresh client menu with updated data
+					b.handleClientMenu(chatID, messageID, inboundID, clientIndex, query.ID)
 					return nil
 				}
 			}
@@ -805,27 +934,85 @@ func (b *Bot) handleClientMenu(chatID int64, messageID int, inboundID int, clien
 		}
 	}
 
-	// 'client' already assigned via getClientFromCacheCopy or reloaded above
+	// Get info from clicked client
 	email := client["email"]
-	enable := client["enable"]
+	cleanEmail := stripInboundSuffix(email)
 	tgId := client["tgId"]
 	totalGB := client["totalGB"]
 	expiryTime := client["expiryTime"]
 
-	// Get client traffic stats
-	var up, down, total int64
-	traffic, err := b.apiClient.GetClientTraffics(context.Background(), email)
-	if err == nil && traffic != nil {
-		if u, ok := traffic["up"].(float64); ok {
-			up = int64(u)
-		}
-		if d, ok := traffic["down"].(float64); ok {
-			down = int64(d)
-		}
-		total = up + down
+	// Find ALL clients with same tgId across all inbounds
+	type InboundClientInfo struct {
+		InboundID   int
+		InboundName string
+		ClientIndex int
+		Email       string
+		Enable      bool
+		Traffic     int64
 	}
 
-	// Get Telegram username if exists
+	var allClientInstances []InboundClientInfo
+
+	inbounds, err := b.apiClient.GetInbounds(context.Background())
+	if err == nil {
+		for _, inbound := range inbounds {
+			ibID := int(inbound["id"].(float64))
+			ibName := ""
+			if remark, ok := inbound["remark"].(string); ok && remark != "" {
+				ibName = remark
+			} else {
+				ibName = fmt.Sprintf("Inbound %d", ibID)
+			}
+
+			settingsStr := ""
+			if settings, ok := inbound["settings"].(string); ok {
+				settingsStr = settings
+			}
+
+			clients, err := b.clientService.ParseClients(settingsStr)
+			if err != nil {
+				continue
+			}
+
+			for idx, c := range clients {
+				if c["tgId"] == tgId && tgId != "" && tgId != "0" {
+					// Found client in this inbound
+					isEnabled := c["enable"] == "true"
+
+					// Get traffic for this specific instance
+					var traffic int64
+					trafficData, err := b.apiClient.GetClientTraffics(context.Background(), c["email"])
+					if err == nil && trafficData != nil {
+						var up, down int64
+						if u, ok := trafficData["up"].(float64); ok {
+							up = int64(u)
+						}
+						if d, ok := trafficData["down"].(float64); ok {
+							down = int64(d)
+						}
+						traffic = up + down
+					}
+
+					allClientInstances = append(allClientInstances, InboundClientInfo{
+						InboundID:   ibID,
+						InboundName: ibName,
+						ClientIndex: idx,
+						Email:       c["email"],
+						Enable:      isEnabled,
+						Traffic:     traffic,
+					})
+				}
+			}
+		}
+	}
+
+	// Calculate total traffic across all inbounds
+	var totalTraffic int64
+	for _, instance := range allClientInstances {
+		totalTraffic += instance.Traffic
+	}
+
+	// Get Telegram username
 	tgUsernameStr := ""
 	if tgId != "" && tgId != "0" {
 		tgIDInt, err := strconv.ParseInt(tgId, 10, 64)
@@ -871,7 +1058,7 @@ func (b *Bot) handleClientMenu(chatID int64, messageID int, inboundID int, clien
 
 		percentage := 0
 		if limitBytes > 0 {
-			percentage = int(math.Ceil((float64(total) / limitBytes) * 100))
+			percentage = int(math.Ceil((float64(totalTraffic) / limitBytes) * 100))
 		}
 
 		trafficLimitStr = fmt.Sprintf(" / %.0f ГБ (%d%%)", limitGB, percentage)
@@ -879,14 +1066,38 @@ func (b *Bot) handleClientMenu(chatID int64, messageID int, inboundID int, clien
 		trafficLimitStr = " (∞)"
 	}
 
-	// Status
+	// Status - based on whether enabled in ANY inbound
 	statusText := "🟢 Активен"
+	anyEnabled := false
+	for _, instance := range allClientInstances {
+		if instance.Enable {
+			anyEnabled = true
+			break
+		}
+	}
+
 	if isExpired {
 		statusText = "⛔ Истекла подписка"
-	} else if enable == "false" {
+	} else if !anyEnabled {
 		statusText = "🔴 Заблокирован"
 	} else if isUnlimited {
 		statusText = "💎 Безлимитная подписка"
+	}
+
+	// Build inbounds list
+	inboundsListStr := ""
+	if len(allClientInstances) > 0 {
+		inboundsListStr = "\n\n🌐 <b>Инбаунды:</b>"
+		for _, instance := range allClientInstances {
+			statusEmoji := "🟢"
+			if !instance.Enable {
+				statusEmoji = "🔴"
+			}
+			inboundsListStr += fmt.Sprintf("\n%s %s - %s",
+				statusEmoji,
+				instance.InboundName,
+				b.clientService.FormatBytes(instance.Traffic))
+		}
 	}
 
 	// Build message
@@ -894,28 +1105,27 @@ func (b *Bot) handleClientMenu(chatID int64, messageID int, inboundID int, clien
 		"👤 <b>%s</b>\n\n"+
 			"📊 Статус: %s%s\n"+
 			"📅 Подписка: %s\n\n"+
-			"⬆️ Отдано: %s\n"+
-			"⬇️ Получено: %s\n"+
-			"📊 Всего: %s%s",
-		html.EscapeString(email),
+			"📊 Суммарный трафик: %s%s%s",
+		html.EscapeString(cleanEmail),
 		statusText,
 		tgUsernameStr,
 		subscriptionStr,
-		b.clientService.FormatBytes(up),
-		b.clientService.FormatBytes(down),
-		b.clientService.FormatBytes(total),
+		b.clientService.FormatBytes(totalTraffic),
 		trafficLimitStr,
-	) // Build keyboard with actions
+		inboundsListStr,
+	)
+
+	// Build keyboard with actions
 	var buttons [][]telego.InlineKeyboardButton
 
-	// Toggle block/unblock button
-	if enable == "false" {
+	// Toggle block/unblock button - will affect ALL inbounds
+	if anyEnabled {
 		buttons = append(buttons, []telego.InlineKeyboardButton{
-			tu.InlineKeyboardButton("✅ Разблокировать").WithCallbackData(fmt.Sprintf("toggle_%d_%d", inboundID, clientIndex)),
+			tu.InlineKeyboardButton("🔒 Заблокировать везде").WithCallbackData(fmt.Sprintf("toggle_%d_%d", inboundID, clientIndex)),
 		})
 	} else {
 		buttons = append(buttons, []telego.InlineKeyboardButton{
-			tu.InlineKeyboardButton("🔒 Заблокировать").WithCallbackData(fmt.Sprintf("toggle_%d_%d", inboundID, clientIndex)),
+			tu.InlineKeyboardButton("✅ Разблокировать везде").WithCallbackData(fmt.Sprintf("toggle_%d_%d", inboundID, clientIndex)),
 		})
 	}
 
@@ -959,11 +1169,13 @@ func (b *Bot) handleClientMenu(chatID int64, messageID int, inboundID int, clien
 func (b *Bot) handleForecastTotalCallback(chatID int64, messageID int, callbackID string) {
 	forecast, err := b.forecastService.CalculateTotalForecast()
 	if err != nil {
-		b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: callbackID,
 			Text:            "❌ Ошибка расчета прогноза",
 			ShowAlert:       true,
-		})
+		}); err != nil {
+			b.logger.Errorf("Failed to answer callback query: %v", err)
+		}
 		return
 	}
 
@@ -996,7 +1208,9 @@ func (b *Bot) handleForecastTotalCallback(chatID int64, messageID int, callbackI
 	}
 
 	b.editMessage(chatID, messageID, message, keyboard)
-	b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{CallbackQueryID: callbackID})
+	if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{CallbackQueryID: callbackID}); err != nil {
+		b.logger.Errorf("Failed to answer callback query: %v", err)
+	}
 }
 
 // handleForecastInboundCallback handles forecast_inbound_X callback
@@ -1016,11 +1230,13 @@ func (b *Bot) handleForecastInboundCallback(chatID int64, messageID int, callbac
 
 	forecast, err := b.forecastService.CalculateForecast(inboundID)
 	if err != nil {
-		b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
+		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: callbackID,
 			Text:            fmt.Sprintf("❌ Ошибка: %v", err),
 			ShowAlert:       true,
-		})
+		}); err != nil {
+			b.logger.Errorf("Failed to answer callback query: %v", err)
+		}
 		return
 	}
 
@@ -1034,5 +1250,7 @@ func (b *Bot) handleForecastInboundCallback(chatID int64, messageID int, callbac
 	)
 
 	b.editMessage(chatID, messageID, message, keyboard)
-	b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{CallbackQueryID: callbackID})
+	if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{CallbackQueryID: callbackID}); err != nil {
+		b.logger.Errorf("Failed to answer callback query: %v", err)
+	}
 }

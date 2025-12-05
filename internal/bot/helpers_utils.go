@@ -100,38 +100,6 @@ func (b *Bot) addProtocolFields(clientData map[string]interface{}, protocol stri
 	}
 }
 
-// findClientByTgID finds client and inbound by telegram user ID
-func (b *Bot) findClientByTgID(userID int64) (client map[string]string, inboundID int, email string, err error) {
-	inbounds, err := b.apiClient.GetInbounds(context.Background())
-	if err != nil {
-		return nil, 0, "", fmt.Errorf("failed to get inbounds: %w", err)
-	}
-
-	for _, inbound := range inbounds {
-		id := int(inbound["id"].(float64))
-		settingsStr, ok := inbound["settings"].(string)
-		if !ok {
-			continue
-		}
-
-		clients, err := b.clientService.ParseClients(settingsStr)
-		if err != nil {
-			b.logger.Errorf("Error parsing clients in findClientByTgID (inboundID=%d): %v", id, err)
-			continue
-		}
-
-		for _, c := range clients {
-			if c["tgId"] == fmt.Sprintf("%d", userID) {
-				// Strip ##ibN suffix from email for display
-				cleanEmail := stripInboundSuffix(c["email"])
-				return c, id, cleanEmail, nil
-			}
-		}
-	}
-
-	return nil, 0, "", fmt.Errorf("client not found for user ID %d", userID)
-}
-
 // createInstructionsKeyboard creates inline keyboard with platform options for instructions
 func (b *Bot) createInstructionsKeyboard() *telego.InlineKeyboardMarkup {
 	return tu.InlineKeyboard(
