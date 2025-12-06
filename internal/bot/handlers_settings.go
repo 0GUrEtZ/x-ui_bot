@@ -89,34 +89,36 @@ func (b *Bot) sendSubscriptionInfo(chatID int64, userID int64, email string, tit
 				}
 			}
 
-			// If we found a matching client, get traffic for this inbound
+			// If we found a matching client, get traffic from clientStats
 			if matchedClient != nil {
 				clientEmail := matchedClient["email"]
 
-				// Get all traffic for this inbound by ID
 				inboundIDInt := 0
 				if id, ok := inbound["id"].(float64); ok {
 					inboundIDInt = int(id)
 				}
 
-				traffics, err := b.apiClient.GetClientTrafficsById(context.Background(), inboundIDInt)
-				if err != nil {
-					continue
-				}
-
-				// Find traffic for our specific client email
+				// Get traffic from clientStats in the inbound
 				var up, down int64
 				found := false
-				for _, trafficData := range traffics {
-					if email, ok := trafficData["email"].(string); ok && email == clientEmail {
-						if u, ok := trafficData["up"].(float64); ok {
-							up = int64(u)
+
+				if clientStats, ok := inbound["clientStats"].([]interface{}); ok {
+					for _, stat := range clientStats {
+						statMap, ok := stat.(map[string]interface{})
+						if !ok {
+							continue
 						}
-						if d, ok := trafficData["down"].(float64); ok {
-							down = int64(d)
+
+						if email, ok := statMap["email"].(string); ok && email == clientEmail {
+							if u, ok := statMap["up"].(float64); ok {
+								up = int64(u)
+							}
+							if d, ok := statMap["down"].(float64); ok {
+								down = int64(d)
+							}
+							found = true
+							break
 						}
-						found = true
-						break
 					}
 				}
 
@@ -353,37 +355,42 @@ func (b *Bot) handleTrafficDetails(chatID int64, userID int64, messageID int) {
 			}
 		}
 
-		// If we found a matching client, get traffic for this inbound
+		// If we found a matching client, get traffic from clientStats
 		if matchedClient != nil {
 			clientEmail := matchedClient["email"]
 
-			// Get all traffic for this inbound by ID
 			inboundIDInt := 0
 			if id, ok := inbound["id"].(float64); ok {
 				inboundIDInt = int(id)
 			}
 
-			traffics, err := b.apiClient.GetClientTrafficsById(context.Background(), inboundIDInt)
-			if err != nil {
-				b.logger.Errorf("Failed to get traffic for inbound %d: %v", inboundIDInt, err)
-				continue
-			}
-
-			// Find traffic for our specific client email
+			// Get traffic from clientStats in the inbound
 			var up, down int64
 			found := false
-			for _, trafficData := range traffics {
-				if email, ok := trafficData["email"].(string); ok && email == clientEmail {
-					if u, ok := trafficData["up"].(float64); ok {
-						up = int64(u)
+
+			if clientStats, ok := inbound["clientStats"].([]interface{}); ok {
+				b.logger.Infof("Checking %d clientStats entries for %s", len(clientStats), clientEmail)
+
+				for _, stat := range clientStats {
+					statMap, ok := stat.(map[string]interface{})
+					if !ok {
+						continue
 					}
-					if d, ok := trafficData["down"].(float64); ok {
-						down = int64(d)
+
+					if email, ok := statMap["email"].(string); ok && email == clientEmail {
+						if u, ok := statMap["up"].(float64); ok {
+							up = int64(u)
+						}
+						if d, ok := statMap["down"].(float64); ok {
+							down = int64(d)
+						}
+						found = true
+						b.logger.Infof("Found traffic for %s: up=%d, down=%d", clientEmail, up, down)
+						break
 					}
-					found = true
-					b.logger.Infof("Found traffic for %s: up=%d, down=%d", clientEmail, up, down)
-					break
 				}
+			} else {
+				b.logger.Warnf("No clientStats in inbound %s", inboundID)
 			}
 
 			if found {

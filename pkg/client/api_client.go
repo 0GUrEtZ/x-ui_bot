@@ -288,7 +288,19 @@ func (c *APIClient) GetClientTrafficsById(ctx context.Context, inboundID int) ([
 	}
 
 	if !result.Success {
+		log.Printf("[ERROR] GetClientTrafficsById: API returned success=false for inbound %d, response: %s", inboundID, string(bodyBytes))
 		return nil, fmt.Errorf("API returned success=false")
+	}
+
+	log.Printf("[DEBUG] GetClientTrafficsById: inbound %d returned %d traffic entries", inboundID, len(result.Obj))
+	if len(result.Obj) > 0 {
+		var emails []string
+		for _, item := range result.Obj {
+			if email, ok := item["email"].(string); ok {
+				emails = append(emails, email)
+			}
+		}
+		log.Printf("[DEBUG] Traffic emails for inbound %d: %v", inboundID, emails)
 	}
 
 	return result.Obj, nil
