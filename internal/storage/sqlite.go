@@ -15,10 +15,18 @@ type SQLiteStorage struct {
 
 // NewSQLiteStorage creates a new SQLite storage
 func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	// Add pragma parameters for better concurrency
+	// WAL mode allows concurrent reads and writes
+	// busy_timeout makes SQLite wait instead of returning SQLITE_BUSY
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+
+	// Configure connection pool to limit concurrent access
+	db.SetMaxOpenConns(1)    // SQLite works best with single writer
+	db.SetMaxIdleConns(1)    // Keep connection alive
+	db.SetConnMaxLifetime(0) // Reuse connections indefinitely
 
 	storage := &SQLiteStorage{db: db}
 	if err := storage.initialize(); err != nil {
@@ -424,9 +432,46 @@ func (s *SQLiteStorage) CleanupExpiredStates(maxAge time.Duration) error {
 	return nil
 }
 
+// CleanupOrphanedTrafficSyncState removes traffic sync records for emails not in active clients
+func (s *SQLiteStorage) CleanupOrphanedTrafficSyncState(activeEmails map[string]bool) error {
+	if len(activeEmails) == 0 {
+		return nil
+	}
+
+	// Get all emails in traffic_sync_state
+	rows, err := s.db.Query("SELECT DISTINCT email FROM traffic_sync_state")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var orphanedEmails []string
+	for rows.Next() {
+		var email string
+		if err := rows.Scan(&email); err != nil {
+			return err
+		}
+		if !activeEmails[email] {
+			orphanedEmails = append(orphanedEmails, email)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// Delete orphaned records
+	for _, email := range orphanedEmails {
+		_, err := s.db.Exec("DELETE FROM traffic_sync_state WHERE email = ?", email)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // Close closes the database connection
 func (s *SQLiteStorage) Close() error {
 	return s.db.Close()
-}
-
-// Helper function to marshal/unmarshal complex types if needed
+} // Helper function to marshal/unmarshal complex types if needed

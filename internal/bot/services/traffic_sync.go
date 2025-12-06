@@ -160,6 +160,7 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 		// Calculate total traffic delta and max last synced value
 		var totalDeltaUp, totalDeltaDown int64
 		var maxLastUp, maxLastDown int64
+		trafficReset := false
 
 		for inboundID, statMap := range inboundMap {
 			email, _ := statMap["email"].(string)
@@ -181,6 +182,21 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 				// Continue with 0 values
 			}
 
+			// Detect traffic reset by panel (e.g., monthly reset)
+			// If current is significantly less than last, assume a reset occurred
+			if lastUp > 0 && currentUp < lastUp/2 {
+				ts.logger.Infof("Detected traffic reset for %s in inbound %d: last=%d, current=%d", email, inboundID, lastUp, currentUp)
+				trafficReset = true
+				lastUp = 0
+			}
+			if lastDown > 0 && currentDown < lastDown/2 {
+				if !trafficReset {
+					ts.logger.Infof("Detected traffic reset for %s in inbound %d: last=%d, current=%d", email, inboundID, lastDown, currentDown)
+					trafficReset = true
+				}
+				lastDown = 0
+			}
+
 			if lastUp > maxLastUp {
 				maxLastUp = lastUp
 			}
@@ -195,11 +211,13 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 		targetUp := maxLastUp + totalDeltaUp
 		targetDown := maxLastDown + totalDeltaDown
 
-		// Safety check: target cannot be negative
+		// Safety check: target cannot be negative (shouldn't happen after reset detection)
 		if targetUp < 0 {
+			ts.logger.Warnf("Negative target traffic detected for tgId %s, resetting to 0", tgID)
 			targetUp = 0
 		}
 		if targetDown < 0 {
+			ts.logger.Warnf("Negative target traffic detected for tgId %s, resetting to 0", tgID)
 			targetDown = 0
 		}
 
@@ -249,6 +267,18 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 	}
 
 	ts.logger.Infof("Traffic sync completed: updated %d clients", synced)
+
+	// Cleanup orphaned traffic sync state records
+	activeEmails := make(map[string]bool)
+	for email := range emailToTgID {
+		activeEmails[email] = true
+	}
+
+	if err := ts.storage.CleanupOrphanedTrafficSyncState(activeEmails); err != nil {
+		ts.logger.Errorf("Failed to cleanup orphaned traffic sync state: %v", err)
+	} else {
+		ts.logger.Debugf("Cleaned up orphaned traffic sync state records")
+	}
 }
 
 // updateClientTraffic updates traffic for a specific client using the x-ui API
