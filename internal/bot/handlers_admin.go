@@ -61,10 +61,11 @@ func (b *Bot) handleAdminMessageSend(adminChatID int64, messageText string) {
 		ReplyMarkup: replyKB,
 	})
 
+	cleanEmail := stripInboundSuffix(state.ClientEmail)
 	if err != nil {
-		b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить сообщение клиенту %s: %v", state.ClientEmail, err))
+		b.sendMessage(adminChatID, fmt.Sprintf("❌ Не удалось отправить сообщение клиенту %s: %v", cleanEmail, err))
 	} else {
-		b.sendMessage(adminChatID, fmt.Sprintf("✅ Сообщение отправлено клиенту %s", state.ClientEmail))
+		b.sendMessage(adminChatID, fmt.Sprintf("✅ Сообщение отправлено клиенту %s", cleanEmail))
 	}
 
 	// Clear state
@@ -286,7 +287,8 @@ func (b *Bot) handleUsage(chatID int64, email string) {
 	}
 
 	// Format usage message
-	msg := fmt.Sprintf("📈 Usage for %s:\n\n", email)
+	cleanEmail := stripInboundSuffix(email)
+	msg := fmt.Sprintf("📈 Usage for %s:\n\n", cleanEmail)
 
 	if up, ok := traffic["up"].(float64); ok {
 		msg += fmt.Sprintf("⬆️ Upload: %.2f GB\n", up/1024/1024/1024)

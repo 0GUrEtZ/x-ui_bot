@@ -120,6 +120,7 @@ func (b *Bot) handleCommand(ctx *th.Context, message telego.Message) error {
 					cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
 					if client, ok := b.getClientFromCacheCopy(cacheKey); ok {
 						email := client["email"]
+						cleanEmail := stripInboundSuffix(email)
 
 						switch action {
 						case "enable":
@@ -127,7 +128,7 @@ func (b *Bot) handleCommand(ctx *th.Context, message telego.Message) error {
 							if err != nil {
 								b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка: %v", err))
 							} else {
-								b.sendMessage(chatID, fmt.Sprintf("✅ Клиент %s разблокирован", email))
+								b.sendMessage(chatID, fmt.Sprintf("✅ Клиент %s разблокирован", cleanEmail))
 								b.handleClients(chatID, isAdmin)
 							}
 						case "disable":
@@ -135,7 +136,7 @@ func (b *Bot) handleCommand(ctx *th.Context, message telego.Message) error {
 							if err != nil {
 								b.sendMessage(chatID, fmt.Sprintf("❌ Ошибка: %v", err))
 							} else {
-								b.sendMessage(chatID, fmt.Sprintf("🔒 Клиент %s заблокирован", email))
+								b.sendMessage(chatID, fmt.Sprintf("🔒 Клиент %s заблокирован", cleanEmail))
 								b.handleClients(chatID, isAdmin)
 							}
 						}
@@ -520,9 +521,10 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 				cacheKey := fmt.Sprintf("%d_%d", inboundID, clientIndex)
 				if client, ok := b.getClientFromCacheCopy(cacheKey); ok {
 					email := client["email"]
+					cleanEmail := stripInboundSuffix(email)
 
 					// Show confirmation dialog
-					confirmMsg := fmt.Sprintf("❗ Вы уверены, что хотите удалить клиента?\n\n👤 Email: %s", email)
+					confirmMsg := fmt.Sprintf("❗ Вы уверены, что хотите удалить клиента?\n\n👤 Email: %s", cleanEmail)
 					keyboard := kbd.BuildConfirmDeleteKeyboard(inboundID, clientIndex)
 
 					if _, err := b.bot.EditMessageText(context.Background(), &telego.EditMessageTextParams{
@@ -689,7 +691,8 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 						}); err != nil { // Ask admin to type message
 							b.logger.Errorf("Failed to answer message client callback: %v", err)
 						}
-						msg := fmt.Sprintf("💬 Отправка сообщения клиенту %s\n\nВведите текст сообщения:", email)
+						cleanEmail := stripInboundSuffix(email)
+						msg := fmt.Sprintf("💬 Отправка сообщения клиенту %s\n\nВведите текст сообщения:", cleanEmail)
 						b.sendMessage(chatID, msg)
 					} else {
 						if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{

@@ -394,7 +394,7 @@ func (b *Bot) handleUpdateUsername(chatID int64, userID int64) {
 
 	currentEmail := ""
 	if e, ok := clientInfo["email"].(string); ok {
-		currentEmail = e
+		currentEmail = stripInboundSuffix(e)
 	}
 
 	// Set state and ask for new username
