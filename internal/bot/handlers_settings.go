@@ -510,6 +510,16 @@ func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
 	b.sendMessage(chatID, fmt.Sprintf("✅ Username успешно обновлен во всех inbounds!\n\n👤 Старый: %s\n👤 Новый: %s\n📊 Обновлено: %d/%d", oldEmailClean, newEmail, updatedCount, len(inbounds)))
 	b.logger.Infof("Username updated for user %d from %s to %s in %d inbounds", userID, oldEmailClean, newEmail, updatedCount)
 
+	// Update traffic sync state records to use new email instead of old
+	// This preserves traffic sync history when username changes
+	if oldEmailClean != "" && oldEmailClean != newEmail {
+		if err := b.storage.UpdateTrafficSyncStateEmail(oldEmailClean, newEmail); err != nil {
+			b.logger.Errorf("Failed to update traffic sync state email from %s to %s: %v", oldEmailClean, newEmail, err)
+		} else {
+			b.logger.Infof("Updated traffic sync state email from %s to %s", oldEmailClean, newEmail)
+		}
+	}
+
 	// Clear state
 	if err := b.deleteUserState(chatID); err != nil {
 		b.logger.Errorf("Failed to delete user state: %v", err)

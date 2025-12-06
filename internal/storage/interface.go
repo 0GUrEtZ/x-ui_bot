@@ -100,6 +100,8 @@ type Storage interface {
 	GetTrafficSyncState(email string, inboundID int) (up, down int64, err error)
 	SetTrafficSyncState(email string, inboundID int, up, down int64) error
 	CleanupOrphanedTrafficSyncState(activeEmails map[string]bool) error
+	DeleteTrafficSyncStateForEmail(email string) error
+	UpdateTrafficSyncStateEmail(oldEmail, newEmail string) error
 
 	// Cleanup
 	CleanupExpiredStates(maxAge time.Duration) error

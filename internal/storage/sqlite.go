@@ -471,6 +471,18 @@ func (s *SQLiteStorage) CleanupOrphanedTrafficSyncState(activeEmails map[string]
 	return nil
 }
 
+// DeleteTrafficSyncStateForEmail removes all traffic sync records for a specific email
+func (s *SQLiteStorage) DeleteTrafficSyncStateForEmail(email string) error {
+	_, err := s.db.Exec("DELETE FROM traffic_sync_state WHERE email = ?", email)
+	return err
+}
+
+// UpdateTrafficSyncStateEmail updates all traffic sync records from old email to new email
+func (s *SQLiteStorage) UpdateTrafficSyncStateEmail(oldEmail, newEmail string) error {
+	_, err := s.db.Exec("UPDATE traffic_sync_state SET email = ? WHERE email = ?", newEmail, oldEmail)
+	return err
+}
+
 // Close closes the database connection
 func (s *SQLiteStorage) Close() error {
 	return s.db.Close()
