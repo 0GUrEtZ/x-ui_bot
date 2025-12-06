@@ -87,6 +87,15 @@ func (s *SQLiteStorage) initialize() error {
 		notified_days TEXT DEFAULT ''
 	);
 	CREATE INDEX IF NOT EXISTS idx_expiry_time ON subscription_expiry(expiry_time);
+
+	CREATE TABLE IF NOT EXISTS traffic_sync_state (
+		email TEXT NOT NULL,
+		inbound_id INTEGER NOT NULL,
+		up INTEGER NOT NULL,
+		down INTEGER NOT NULL,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (email, inbound_id)
+	);
 	`
 
 	_, err := s.db.Exec(schema)
@@ -369,6 +378,24 @@ func (s *SQLiteStorage) MarkSubscriptionNotified(email string, daysNotified stri
 
 func (s *SQLiteStorage) DeleteExpiredSubscriptions() error {
 	_, err := s.db.Exec("DELETE FROM subscription_expiry WHERE expiry_time > 0 AND expiry_time < ?", time.Now().UnixMilli())
+	return err
+}
+
+// Traffic sync state
+func (s *SQLiteStorage) GetTrafficSyncState(email string, inboundID int) (int64, int64, error) {
+	var up, down int64
+	err := s.db.QueryRow("SELECT up, down FROM traffic_sync_state WHERE email = ? AND inbound_id = ?", email, inboundID).Scan(&up, &down)
+	if err == sql.ErrNoRows {
+		return 0, 0, nil
+	}
+	return up, down, err
+}
+
+func (s *SQLiteStorage) SetTrafficSyncState(email string, inboundID int, up, down int64) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO traffic_sync_state (email, inbound_id, up, down, updated_at)
+		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`, email, inboundID, up, down)
 	return err
 }
 

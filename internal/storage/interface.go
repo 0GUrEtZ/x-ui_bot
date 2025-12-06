@@ -96,6 +96,10 @@ type Storage interface {
 	MarkSubscriptionNotified(email string, daysNotified string) error
 	DeleteExpiredSubscriptions() error
 
+	// Traffic sync state
+	GetTrafficSyncState(email string, inboundID int) (up, down int64, err error)
+	SetTrafficSyncState(email string, inboundID int, up, down int64) error
+
 	// Cleanup
 	CleanupExpiredStates(maxAge time.Duration) error
 

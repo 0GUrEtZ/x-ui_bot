@@ -318,14 +318,9 @@ func (c *APIClient) UpdateClientTraffic(ctx context.Context, email string, up in
 		"down": down,
 	}
 
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
-	}
-
 	log.Printf("[DEBUG] UpdateClientTraffic: email=%s, path=%s, up=%d, down=%d", email, path, up, down)
 
-	resp, err := c.doRequest(ctx, "POST", path, bytes.NewReader(body), true)
+	resp, err := c.doRequest(ctx, "POST", path, payload, true)
 	if err != nil {
 		log.Printf("[ERROR] UpdateClientTraffic request failed for %s: %v", email, err)
 		return err

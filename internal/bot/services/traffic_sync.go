@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"x-ui-bot/internal/logger"
+	"x-ui-bot/internal/storage"
 	"x-ui-bot/pkg/client"
 )
 
@@ -12,16 +13,18 @@ import (
 type TrafficSyncService struct {
 	apiClient     *client.APIClient
 	clientService *ClientService
+	storage       storage.Storage
 	logger        *logger.Logger
 	enabled       bool
 	syncHours     int
 }
 
 // NewTrafficSyncService creates a new traffic sync service
-func NewTrafficSyncService(apiClient *client.APIClient, clientService *ClientService, logger *logger.Logger, syncHours int) *TrafficSyncService {
+func NewTrafficSyncService(apiClient *client.APIClient, clientService *ClientService, storage storage.Storage, logger *logger.Logger, syncHours int) *TrafficSyncService {
 	return &TrafficSyncService{
 		apiClient:     apiClient,
 		clientService: clientService,
+		storage:       storage,
 		logger:        logger,
 		enabled:       syncHours > 0,
 		syncHours:     syncHours,
@@ -154,20 +157,56 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 			continue // Only sync if user exists in multiple inbounds
 		}
 
-		// Calculate total traffic across all inbounds (sum, not max)
-		var totalUp, totalDown int64
-		for _, statMap := range inboundMap {
+		// Calculate total traffic delta and max last synced value
+		var totalDeltaUp, totalDeltaDown int64
+		var maxLastUp, maxLastDown int64
+
+		for inboundID, statMap := range inboundMap {
+			email, _ := statMap["email"].(string)
+
+			currentUp := int64(0)
 			if up, ok := statMap["up"].(float64); ok {
-				totalUp += int64(up)
+				currentUp = int64(up)
 			}
+
+			currentDown := int64(0)
 			if down, ok := statMap["down"].(float64); ok {
-				totalDown += int64(down)
+				currentDown = int64(down)
 			}
+
+			// Get last synced state
+			lastUp, lastDown, err := ts.storage.GetTrafficSyncState(email, inboundID)
+			if err != nil {
+				ts.logger.Errorf("Failed to get traffic sync state for %s: %v", email, err)
+				// Continue with 0 values
+			}
+
+			if lastUp > maxLastUp {
+				maxLastUp = lastUp
+			}
+			if lastDown > maxLastDown {
+				maxLastDown = lastDown
+			}
+
+			totalDeltaUp += (currentUp - lastUp)
+			totalDeltaDown += (currentDown - lastDown)
 		}
 
-		ts.logger.Debugf("Total traffic for tgId %s: up=%d, down=%d", tgID, totalUp, totalDown)
+		targetUp := maxLastUp + totalDeltaUp
+		targetDown := maxLastDown + totalDeltaDown
 
-		// Update traffic in all inbounds to match the total sum
+		// Safety check: target cannot be negative
+		if targetUp < 0 {
+			targetUp = 0
+		}
+		if targetDown < 0 {
+			targetDown = 0
+		}
+
+		ts.logger.Debugf("Sync calc for tgId %s: maxLast(up=%d, down=%d) + delta(up=%d, down=%d) = target(up=%d, down=%d)",
+			tgID, maxLastUp, maxLastDown, totalDeltaUp, totalDeltaDown, targetUp, targetDown)
+
+		// Update traffic in all inbounds to match the target
 		for inboundID, statMap := range inboundMap {
 			email, _ := statMap["email"].(string)
 			currentUp := int64(0)
@@ -180,21 +219,31 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 				currentDown = int64(down)
 			}
 
-			// Only update if current traffic differs from total
-			if currentUp != totalUp || currentDown != totalDown {
+			// Only update if current traffic differs from target
+			if currentUp != targetUp || currentDown != targetDown {
 				ts.logger.Debugf("Updating %s: current(up=%d, down=%d) -> target(up=%d, down=%d)",
-					email, currentUp, currentDown, totalUp, totalDown)
+					email, currentUp, currentDown, targetUp, targetDown)
 
-				// Send target value (total sum) - API sets absolute value
-				if err := ts.updateClientTraffic(ctx, email, totalUp, totalDown); err != nil {
+				// Send target value - API sets absolute value
+				if err := ts.updateClientTraffic(ctx, email, targetUp, targetDown); err != nil {
 					ts.logger.Errorf("Failed to update traffic for %s (tgId=%s) in inbound %d: %v", email, tgID, inboundID, err)
 				} else {
 					synced++
 					ts.logger.Infof("Synced traffic for %s (tgId=%s): set to up=%d, down=%d",
-						email, tgID, totalUp, totalDown)
+						email, tgID, targetUp, targetDown)
+
+					// Update state in DB
+					if err := ts.storage.SetTrafficSyncState(email, inboundID, targetUp, targetDown); err != nil {
+						ts.logger.Errorf("Failed to save traffic sync state for %s: %v", email, err)
+					}
 				}
 			} else {
-				ts.logger.Debugf("Skipping %s - already at total traffic", email)
+				// Even if we didn't update API (already matched), we should ensure DB is up to date
+				// This handles cases where API was updated but DB wasn't, or if we just started and values match
+				if err := ts.storage.SetTrafficSyncState(email, inboundID, targetUp, targetDown); err != nil {
+					ts.logger.Errorf("Failed to save traffic sync state for %s: %v", email, err)
+				}
+				ts.logger.Debugf("Skipping %s - already at target traffic", email)
 			}
 		}
 	}
