@@ -5,6 +5,7 @@
 *.so
 *.dylib
 x-ui-bot
+bot
 
 # Test binary
 *.test
@@ -23,6 +24,7 @@ config.yaml
 data/
 *.db
 *.sqlite
+bot.db
 
 # Backup files
 *.backup
