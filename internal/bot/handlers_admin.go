@@ -519,6 +519,7 @@ func (b *Bot) handleExtensionRequest(userID int64, chatID int64, messageID int, 
 	}
 
 	// Update user's message with payment info
+	cleanEmail := stripInboundSuffix(email)
 	b.editMessageText(chatID, messageID, fmt.Sprintf(
 		"✅ Запрос на продление отправлен администраторам!\n\n"+
 			"👤 Аккаунт: %s\n"+
@@ -529,7 +530,7 @@ func (b *Bot) handleExtensionRequest(userID int64, chatID int64, messageID int, 
 			"💰 Сумма: %d₽\n\n"+
 			"✍️ В комментарии укажите свой username.\n\n"+
 			"⏳ После оплаты дождитесь одобрения администратора...",
-		html.EscapeString(email),
+		html.EscapeString(cleanEmail),
 		duration,
 		html.EscapeString(b.config.Payment.Bank),
 		b.config.Payment.PhoneNumber,

@@ -331,12 +331,13 @@ func (b *Bot) handleExtensionMenu(chatID int64, userID int64, messageID int) {
 		expiryTime = time.UnixMilli(int64(exp))
 	}
 
+	cleanEmail := stripInboundSuffix(email)
 	msg := fmt.Sprintf(
 		"⏰ <b>Продление подписки</b>\n\n"+
 			"👤 Аккаунт: %s\n"+
 			"📅 Истекает: %s\n\n"+
 			"Выберите период продления:",
-		email,
+		cleanEmail,
 		expiryTime.Format("02.01.2006 15:04"),
 	)
 
