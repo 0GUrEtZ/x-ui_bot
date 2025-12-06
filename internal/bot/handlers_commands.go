@@ -52,15 +52,29 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 				totalGB = int64(tgb)
 			}
 
-			// Get traffic stats
+			// Get max traffic across all inbounds (synced traffic)
 			var total int64
-			traffic, err := b.apiClient.GetClientTraffics(context.Background(), email)
-			if err == nil && traffic != nil {
-				if u, ok := traffic["up"].(float64); ok {
-					total += int64(u)
-				}
-				if d, ok := traffic["down"].(float64); ok {
-					total += int64(d)
+			inbounds, err := b.apiClient.GetInbounds(context.Background())
+			if err == nil {
+				for _, inbound := range inbounds {
+					if clientStats, ok := inbound["clientStats"].([]interface{}); ok {
+						for _, stat := range clientStats {
+							if statMap, ok := stat.(map[string]interface{}); ok {
+								if statEmail, ok := statMap["email"].(string); ok && statEmail == email {
+									var inboundTotal int64
+									if u, ok := statMap["up"].(float64); ok {
+										inboundTotal += int64(u)
+									}
+									if d, ok := statMap["down"].(float64); ok {
+										inboundTotal += int64(d)
+									}
+									if inboundTotal > total {
+										total = inboundTotal
+									}
+								}
+							}
+						}
+					}
 				}
 			}
 
@@ -81,7 +95,8 @@ func (b *Bot) handleStart(chatID int64, firstName string, isAdmin bool) {
 				statusText = fmt.Sprintf("%d дн. %d ч.", daysRemaining, hoursRemaining)
 			}
 
-			msg += fmt.Sprintf("👤 Аккаунт: %s\n", html.EscapeString(email))
+			cleanEmail := stripInboundSuffix(email)
+			msg += fmt.Sprintf("👤 Аккаунт: %s\n", html.EscapeString(cleanEmail))
 			msg += fmt.Sprintf("%s Подписка: %s\n", statusIcon, statusText)
 
 			// Add traffic info

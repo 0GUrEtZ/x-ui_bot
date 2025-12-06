@@ -202,7 +202,7 @@ func (b *Bot) handleContactAdmin(chatID int64, userID int64) {
 	clientInfo, err := b.apiClient.GetClientByTgID(context.Background(), userID)
 	if err == nil && clientInfo != nil {
 		if email, ok := clientInfo["email"].(string); ok {
-			userName = email
+			userName = stripInboundSuffix(email)
 		}
 	}
 
