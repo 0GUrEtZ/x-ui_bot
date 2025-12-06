@@ -314,8 +314,8 @@ func (c *APIClient) UpdateClientTraffic(ctx context.Context, email string, up in
 	path := fmt.Sprintf("/panel/api/inbounds/updateClientTraffic/%s", encodedEmail)
 
 	payload := map[string]interface{}{
-		"up":   up,
-		"down": down,
+		"upload":   up,
+		"download": down,
 	}
 
 	log.Printf("[DEBUG] UpdateClientTraffic: email=%s, path=%s, up=%d, down=%d", email, path, up, down)
