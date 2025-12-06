@@ -379,9 +379,9 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 				inboundRemark = fmt.Sprintf("inbound%d", inboundID)
 			}
 
-			// Add inbound name suffix to email: email##remarkName
+			// Add inbound name suffix to email: email::remarkName
 			// This allows multiple clients with same base email across inbounds
-			emailForInbound := fmt.Sprintf("%s##%s", req.Email, inboundRemark)
+			emailForInbound := fmt.Sprintf("%s::%s", req.Email, inboundRemark)
 
 			// Create client data with SAME subId for all inbounds
 			clientData := map[string]interface{}{

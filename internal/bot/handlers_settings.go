@@ -410,9 +410,9 @@ func (b *Bot) handleUpdateUsername(chatID int64, userID int64) {
 func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
 	b.logger.Infof("User %d updating username to: %s", userID, newEmail)
 
-	// Check for ## suffix - forbidden for user input
-	if strings.Contains(newEmail, "##") {
-		b.sendMessage(chatID, "❌ Username не может содержать символы ##\n\nЭто служебные символы системы.\n\nВведите новый username:")
+	// Check for :: suffix - forbidden for user input
+	if strings.Contains(newEmail, "::") {
+		b.sendMessage(chatID, "❌ Username не может содержать символы ::\n\nЭто служебные символы системы.\n\nВведите новый username:")
 		return
 	}
 
@@ -480,8 +480,8 @@ func (b *Bot) handleNewEmailInput(chatID int64, userID int64, newEmail string) {
 				}
 
 				// Build new email with appropriate suffix for this inbound
-				// Format: email##remarkName
-				newEmailForInbound := fmt.Sprintf("%s##%s", newEmail, inboundRemark) // Update email field
+				// Format: email::remarkName
+				newEmailForInbound := fmt.Sprintf("%s::%s", newEmail, inboundRemark) // Update email field
 				clientData["email"] = newEmailForInbound
 
 				// Fix numeric fields
