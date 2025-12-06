@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -308,7 +309,9 @@ func (c *APIClient) GetClientTrafficsById(ctx context.Context, inboundID int) ([
 
 // UpdateClientTraffic updates traffic statistics for a specific client
 func (c *APIClient) UpdateClientTraffic(ctx context.Context, email string, up int64, down int64) error {
-	path := fmt.Sprintf("/panel/api/inbounds/updateClientTraffic/%s", email)
+	// URL encode the email to handle special characters
+	encodedEmail := url.QueryEscape(email)
+	path := fmt.Sprintf("/panel/api/inbounds/updateClientTraffic/%s", encodedEmail)
 
 	payload := map[string]interface{}{
 		"up":   up,
@@ -320,8 +323,11 @@ func (c *APIClient) UpdateClientTraffic(ctx context.Context, email string, up in
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
+	log.Printf("[DEBUG] UpdateClientTraffic: email=%s, path=%s, up=%d, down=%d", email, path, up, down)
+
 	resp, err := c.doRequest(ctx, "POST", path, bytes.NewReader(body), true)
 	if err != nil {
+		log.Printf("[ERROR] UpdateClientTraffic request failed for %s: %v", email, err)
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -333,12 +339,16 @@ func (c *APIClient) UpdateClientTraffic(ctx context.Context, email string, up in
 		return c.UpdateClientTraffic(ctx, email, up, down)
 	}
 
+	// Read body for debugging
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	log.Printf("[DEBUG] UpdateClientTraffic response for %s (status=%d): %s", email, resp.StatusCode, string(bodyBytes))
+
 	var result struct {
 		Success bool   `json:"success"`
 		Msg     string `json:"msg"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
 

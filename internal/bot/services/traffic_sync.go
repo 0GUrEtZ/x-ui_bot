@@ -144,6 +144,12 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 	// Now sync traffic: calculate average or use highest value
 	synced := 0
 	for tgID, inboundMap := range userTraffic {
+		// Skip users without valid tgId
+		if tgID == "" || tgID == "0" {
+			ts.logger.Debugf("Skipping user with empty/zero tgId")
+			continue
+		}
+
 		if len(inboundMap) < 2 {
 			continue // Only sync if user exists in multiple inbounds
 		}
