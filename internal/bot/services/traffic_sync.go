@@ -186,20 +186,19 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 
 			// Only update if current traffic is less than max
 			if currentUp < maxUp || currentDown < maxDown {
-				// Calculate the difference to add
-				diffUp := maxUp - currentUp
-				diffDown := maxDown - currentDown
+				ts.logger.Debugf("Updating %s: current(up=%d, down=%d) -> target(up=%d, down=%d)",
+					email, currentUp, currentDown, maxUp, maxDown)
 
-				ts.logger.Debugf("Updating %s: current(up=%d, down=%d) -> target(up=%d, down=%d), diff(up=%d, down=%d)",
-					email, currentUp, currentDown, maxUp, maxDown, diffUp, diffDown)
-
-				if err := ts.updateClientTraffic(ctx, email, diffUp, diffDown); err != nil {
+				// Send target value (max), not difference - API sets absolute value
+				if err := ts.updateClientTraffic(ctx, email, maxUp, maxDown); err != nil {
 					ts.logger.Errorf("Failed to update traffic for %s (tgId=%s) in inbound %d: %v", email, tgID, inboundID, err)
 				} else {
 					synced++
-					ts.logger.Infof("Updated traffic for %s (tgId=%s): added up=%d, down=%d (new total: up=%d, down=%d)",
-						email, tgID, diffUp, diffDown, maxUp, maxDown)
+					ts.logger.Infof("Synced traffic for %s (tgId=%s): set to up=%d, down=%d",
+						email, tgID, maxUp, maxDown)
 				}
+			} else {
+				ts.logger.Debugf("Skipping %s - already at max traffic", email)
 			}
 		}
 	}
