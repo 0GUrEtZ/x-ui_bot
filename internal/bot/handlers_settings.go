@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -124,7 +123,10 @@ func (b *Bot) sendSubscriptionInfo(chatID int64, userID int64, email string, tit
 
 				if found {
 					inboundTraffic := up + down
-					totalTraffic += inboundTraffic
+					// Since traffic is synced across inbounds, use the maximum value found
+					if inboundTraffic > totalTraffic {
+						totalTraffic = inboundTraffic
+					}
 
 					// Extract inbound name
 					inboundName := ""
@@ -237,11 +239,8 @@ func (b *Bot) sendSubscriptionInfo(chatID int64, userID int64, email string, tit
 		html.EscapeString(subLink),
 	)
 
-	// Create keyboard with Traffic and Instructions buttons
+	// Create keyboard with Instructions button
 	keyboard := tu.InlineKeyboard(
-		tu.InlineKeyboardRow(
-			tu.InlineKeyboardButton("📊 Трафик").WithCallbackData("traffic_details"),
-		),
 		tu.InlineKeyboardRow(
 			tu.InlineKeyboardButton("📖 Инструкции").WithCallbackData("instructions_menu"),
 		),
@@ -271,202 +270,6 @@ func (b *Bot) sendSubscriptionInfo(chatID int64, userID int64, email string, tit
 	}
 
 	return nil
-}
-
-// handleTrafficDetails shows detailed traffic breakdown by inbound
-func (b *Bot) handleTrafficDetails(chatID int64, userID int64, messageID int) {
-	b.logger.Infof("User %d requested traffic details", userID)
-
-	// Collect traffic stats from ALL inbounds where user exists
-	type InboundTrafficDetail struct {
-		Name       string
-		Traffic    int64
-		Up         int64
-		Down       int64
-		Percentage float64
-	}
-
-	var inboundTraffics []InboundTrafficDetail
-	var totalTraffic, totalUp, totalDown int64
-	var totalGB int64
-
-	inbounds, err := b.apiClient.GetInbounds(context.Background())
-	if err != nil {
-		b.logger.Errorf("Failed to get inbounds for traffic details: %v", err)
-		b.sendMessage(chatID, "❌ Ошибка загрузки данных")
-		return
-	}
-
-	b.logger.Infof("Found %d inbounds, searching for user %d", len(inbounds), userID)
-
-	for _, inbound := range inbounds {
-		inboundID := ""
-		if id, ok := inbound["id"].(float64); ok {
-			inboundID = fmt.Sprintf("%.0f", id)
-		}
-
-		settingsStr := ""
-		if settings, ok := inbound["settings"].(string); ok {
-			settingsStr = settings
-		}
-
-		clients, err := b.clientService.ParseClients(settingsStr)
-		if err != nil {
-			b.logger.Errorf("Failed to parse clients for inbound %s: %v", inboundID, err)
-			continue
-		}
-
-		b.logger.Infof("Inbound %s has %d clients", inboundID, len(clients))
-
-		// Find client with matching tgId
-		var matchedClient map[string]string
-		for _, client := range clients {
-			clientTgID := client["tgId"]
-			b.logger.Debugf("Checking client: email=%s, tgId=%s (looking for %d)", client["email"], clientTgID, userID)
-
-			if clientTgID == fmt.Sprintf("%d", userID) {
-				matchedClient = client
-				b.logger.Infof("Found matching client: %s in inbound %s", client["email"], inboundID)
-
-				// Get total GB limit (same for all inbounds)
-				if totalGB == 0 {
-					if tgb := client["totalGB"]; tgb != "" && tgb != "0" {
-						if limit, err := strconv.ParseInt(tgb, 10, 64); err == nil {
-							totalGB = limit
-						}
-					}
-				}
-				break
-			}
-		}
-
-		// If we found a matching client, get traffic from clientStats
-		if matchedClient != nil {
-			clientEmail := matchedClient["email"]
-
-			inboundIDInt := 0
-			if id, ok := inbound["id"].(float64); ok {
-				inboundIDInt = int(id)
-			}
-
-			// Get traffic from clientStats in the inbound
-			var up, down int64
-			found := false
-
-			if clientStats, ok := inbound["clientStats"].([]interface{}); ok {
-				b.logger.Infof("Checking %d clientStats entries for %s", len(clientStats), clientEmail)
-
-				for _, stat := range clientStats {
-					statMap, ok := stat.(map[string]interface{})
-					if !ok {
-						continue
-					}
-
-					if email, ok := statMap["email"].(string); ok && email == clientEmail {
-						if u, ok := statMap["up"].(float64); ok {
-							up = int64(u)
-						}
-						if d, ok := statMap["down"].(float64); ok {
-							down = int64(d)
-						}
-						found = true
-						b.logger.Infof("Found traffic for %s: up=%d, down=%d", clientEmail, up, down)
-						break
-					}
-				}
-			} else {
-				b.logger.Warnf("No clientStats in inbound %s", inboundID)
-			}
-
-			if found {
-				inboundTraffic := up + down
-				totalTraffic += inboundTraffic
-				totalUp += up
-				totalDown += down
-
-				// Extract inbound name
-				inboundName := ""
-				if remark, ok := inbound["remark"].(string); ok && remark != "" {
-					inboundName = remark
-				} else {
-					inboundName = fmt.Sprintf("Inbound %d", inboundIDInt)
-				}
-
-				// Calculate percentage
-				percentage := 0.0
-				if totalGB > 0 {
-					percentage = (float64(inboundTraffic) / float64(totalGB)) * 100
-				}
-
-				inboundTraffics = append(inboundTraffics, InboundTrafficDetail{
-					Name:       inboundName,
-					Traffic:    inboundTraffic,
-					Up:         up,
-					Down:       down,
-					Percentage: percentage,
-				})
-			} else {
-				b.logger.Warnf("Traffic not found for email %s in inbound %d", clientEmail, inboundIDInt)
-			}
-		}
-	}
-
-	if len(inboundTraffics) == 0 {
-		b.logger.Warnf("No traffic data found for user %d", userID)
-		b.sendMessage(chatID, "📊 Данные о трафике не найдены")
-		return
-	}
-
-	b.logger.Infof("Found traffic data for %d inbounds", len(inboundTraffics))
-
-	// Build detailed message
-	msg := "📊 <b>Детальная статистика трафика</b>\n\n"
-
-	// Overall stats
-	overallPercentage := 0.0
-	if totalGB > 0 {
-		overallPercentage = (float64(totalTraffic) / float64(totalGB)) * 100
-		msg += fmt.Sprintf("📈 <b>Общий трафик:</b> %s / %s (%.1f%%)\n",
-			b.clientService.FormatBytes(totalTraffic),
-			b.clientService.FormatBytes(totalGB),
-			overallPercentage)
-	} else {
-		msg += fmt.Sprintf("📈 <b>Общий трафик:</b> %s (безлимит)\n",
-			b.clientService.FormatBytes(totalTraffic))
-	}
-
-	msg += fmt.Sprintf("⬆️ Отдано: %s\n", b.clientService.FormatBytes(totalUp))
-	msg += fmt.Sprintf("⬇️ Получено: %s\n\n", b.clientService.FormatBytes(totalDown))
-
-	// Per-inbound breakdown
-	msg += "🌐 <b>По серверам:</b>\n\n"
-	for _, it := range inboundTraffics {
-		trafficEmoji := "🟢"
-		if it.Percentage >= 90 {
-			trafficEmoji = "🔴"
-		} else if it.Percentage >= 70 {
-			trafficEmoji = "🟡"
-		}
-
-		msg += fmt.Sprintf("<b>%s</b> %s\n", it.Name, trafficEmoji)
-		msg += fmt.Sprintf("📊 Всего: %s", b.clientService.FormatBytes(it.Traffic))
-		if totalGB > 0 {
-			msg += fmt.Sprintf(" (%.1f%%)", it.Percentage)
-		}
-		msg += "\n"
-		msg += fmt.Sprintf("⬆️ Отдано: %s\n", b.clientService.FormatBytes(it.Up))
-		msg += fmt.Sprintf("⬇️ Получено: %s\n\n", b.clientService.FormatBytes(it.Down))
-	}
-
-	// Back button
-	keyboard := tu.InlineKeyboard(
-		tu.InlineKeyboardRow(
-			tu.InlineKeyboardButton("◀️ Назад").WithCallbackData("back_to_subscription"),
-		),
-	)
-
-	// Send new message with traffic details instead of editing
-	b.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
 }
 
 // handleMySubscription shows detailed subscription information for the user

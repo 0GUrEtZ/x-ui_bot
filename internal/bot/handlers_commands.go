@@ -351,7 +351,12 @@ func (b *Bot) handleClients(chatID int64, isAdmin bool, messageID ...int) {
 				if d, ok := traffic["down"].(float64); ok {
 					down = int64(d)
 				}
-				gc.TotalTraffic += up + down
+
+				// Use max traffic instead of sum, as traffic is synced across inbounds
+				currentTotal := up + down
+				if currentTotal > gc.TotalTraffic {
+					gc.TotalTraffic = currentTotal
+				}
 			}
 		}
 	}

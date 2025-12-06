@@ -232,7 +232,7 @@ func (s *InboundSyncService) hasClientInInbound(email string, inbound map[string
 }
 
 // createClientInInbound creates a client in the specified inbound
-func (s *InboundSyncService) createClientInInbound(userInfo *UserClientInfo, inbound map[string]interface{}, inboundIndex int) error {
+func (s *InboundSyncService) createClientInInbound(userInfo *UserClientInfo, inbound map[string]interface{}, _ int) error {
 	inboundID := int(inbound["id"].(float64))
 	protocol := ""
 	if p, ok := inbound["protocol"].(string); ok {

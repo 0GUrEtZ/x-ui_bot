@@ -315,17 +315,6 @@ func (b *Bot) handleCallback(ctx *th.Context, query telego.CallbackQuery) error 
 		return nil
 	}
 
-	// Handle traffic details (before block check - available to all users)
-	if data == constants.CbTrafficDetails {
-		b.handleTrafficDetails(chatID, userID, messageID)
-		if err := b.bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
-			CallbackQueryID: query.ID,
-		}); err != nil {
-			b.logger.Errorf("Failed to answer traffic details callback: %v", err)
-		}
-		return nil
-	}
-
 	// Handle instructions menu (before block check - available to all users)
 	if data == constants.CbInstructionsMenu {
 		b.handleInstructionsMenu(chatID, messageID)
