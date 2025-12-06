@@ -154,26 +154,52 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 			continue // Only sync if user exists in multiple inbounds
 		}
 
-		// Calculate total traffic across all inbounds
-		var totalUp, totalDown int64
+		// Find maximum traffic across all inbounds (use highest value, not sum)
+		var maxUp, maxDown int64
 		for _, statMap := range inboundMap {
 			if up, ok := statMap["up"].(float64); ok {
-				totalUp += int64(up)
+				if int64(up) > maxUp {
+					maxUp = int64(up)
+				}
 			}
 			if down, ok := statMap["down"].(float64); ok {
-				totalDown += int64(down)
+				if int64(down) > maxDown {
+					maxDown = int64(down)
+				}
 			}
 		}
 
-		// Update traffic in all inbounds for this user to total
+		ts.logger.Debugf("Max traffic for tgId %s: up=%d, down=%d", tgID, maxUp, maxDown)
+
+		// Update traffic in all inbounds to match the maximum
 		for inboundID, statMap := range inboundMap {
 			email, _ := statMap["email"].(string)
+			currentUp := int64(0)
+			currentDown := int64(0)
 
-			if err := ts.updateClientTraffic(ctx, email, totalUp, totalDown); err != nil {
-				ts.logger.Errorf("Failed to update traffic for %s (tgId=%s) in inbound %d: %v", email, tgID, inboundID, err)
-			} else {
-				synced++
-				ts.logger.Infof("Updated traffic for %s (tgId=%s): up=%d, down=%d", email, tgID, totalUp, totalDown)
+			if up, ok := statMap["up"].(float64); ok {
+				currentUp = int64(up)
+			}
+			if down, ok := statMap["down"].(float64); ok {
+				currentDown = int64(down)
+			}
+
+			// Only update if current traffic is less than max
+			if currentUp < maxUp || currentDown < maxDown {
+				// Calculate the difference to add
+				diffUp := maxUp - currentUp
+				diffDown := maxDown - currentDown
+
+				ts.logger.Debugf("Updating %s: current(up=%d, down=%d) -> target(up=%d, down=%d), diff(up=%d, down=%d)",
+					email, currentUp, currentDown, maxUp, maxDown, diffUp, diffDown)
+
+				if err := ts.updateClientTraffic(ctx, email, diffUp, diffDown); err != nil {
+					ts.logger.Errorf("Failed to update traffic for %s (tgId=%s) in inbound %d: %v", email, tgID, inboundID, err)
+				} else {
+					synced++
+					ts.logger.Infof("Updated traffic for %s (tgId=%s): added up=%d, down=%d (new total: up=%d, down=%d)",
+						email, tgID, diffUp, diffDown, maxUp, maxDown)
+				}
 			}
 		}
 	}
