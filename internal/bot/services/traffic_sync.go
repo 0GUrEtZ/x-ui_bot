@@ -2,7 +2,7 @@ package services
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"log"
 	"time"
 
@@ -69,6 +69,44 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 		return
 	}
 
+	// Build a map of email -> tgId from all inbounds (get tgId from client settings)
+	emailToTgID := make(map[string]string)
+
+	for _, inbound := range inbounds {
+		settingsStr := ""
+		if settings, ok := inbound["settings"].(string); ok {
+			settingsStr = settings
+		}
+
+		// Parse clients from settings to get tgId
+		var inboundSettings map[string]interface{}
+		if err := json.Unmarshal([]byte(settingsStr), &inboundSettings); err != nil {
+			continue
+		}
+
+		clientsArray, ok := inboundSettings["clients"].([]interface{})
+		if !ok {
+			continue
+		}
+
+		for _, client := range clientsArray {
+			clientMap, ok := client.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			email, _ := clientMap["email"].(string)
+			tgID, _ := clientMap["tgId"].(string)
+
+			if email != "" && tgID != "" {
+				emailToTgID[email] = tgID
+				ts.logger.Debugf("Mapped email %s -> tgId %s", email, tgID)
+			}
+		}
+	}
+
+	ts.logger.Infof("Built email->tgId map with %d entries", len(emailToTgID))
+
 	// Collect all users and their traffic from all inbounds
 	// Map: tgId -> inbound -> traffic data
 	userTraffic := make(map[string]map[int]map[string]interface{})
@@ -88,24 +126,24 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 				continue
 			}
 
-			// Get tgId from clientStats
-			// Note: tgId might be stored in a custom field, check the actual structure
-			tgIDRaw, hasTgID := statMap["tgId"]
-			if !hasTgID {
-				// Try to get from the parsed client (requires parsing)
+			email, _ := statMap["email"].(string)
+			tgID, hasTgID := emailToTgID[email]
+
+			if !hasTgID || tgID == "" {
+				ts.logger.Debugf("No tgId found for email %s", email)
 				continue
 			}
-
-			tgID := fmt.Sprintf("%v", tgIDRaw)
-			_, _ = statMap["email"].(string)
 
 			if _, exists := userTraffic[tgID]; !exists {
 				userTraffic[tgID] = make(map[int]map[string]interface{})
 			}
 
 			userTraffic[tgID][inboundID] = statMap
+			ts.logger.Debugf("Added traffic for tgId %s, inbound %d, email %s", tgID, inboundID, email)
 		}
 	}
+
+	ts.logger.Infof("Collected traffic for %d users", len(userTraffic))
 
 	// Now sync traffic: calculate average or use highest value
 	synced := 0
