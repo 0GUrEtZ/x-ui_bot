@@ -1032,10 +1032,12 @@ func (b *Bot) handleClientMenu(chatID int64, messageID int, inboundID int, clien
 		}
 	}
 
-	// Calculate total traffic across all inbounds
+	// Calculate total traffic: use highest traffic among inbounds (synced value)
 	var totalTraffic int64
 	for _, instance := range allClientInstances {
-		totalTraffic += instance.Traffic
+		if instance.Traffic > totalTraffic {
+			totalTraffic = instance.Traffic
+		}
 	}
 
 	// Get Telegram username
@@ -1131,7 +1133,7 @@ func (b *Bot) handleClientMenu(chatID int64, messageID int, inboundID int, clien
 		"👤 <b>%s</b>\n\n"+
 			"📊 Статус: %s%s\n"+
 			"📅 Подписка: %s\n\n"+
-			"📊 Суммарный трафик: %s%s%s",
+			"📊 Трафик: %s%s%s",
 		html.EscapeString(cleanEmail),
 		statusText,
 		tgUsernameStr,
