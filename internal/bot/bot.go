@@ -57,6 +57,7 @@ type Bot struct {
 	forecastService     *services.ForecastService
 	expiryNotifier      *services.ExpiryNotifierService
 	inboundSyncService  *services.InboundSyncService
+	trafficSyncService  *services.TrafficSyncService
 
 	// Middleware
 	authMiddleware *middleware.AuthMiddleware
@@ -91,6 +92,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bo
 	forecastService := services.NewForecastService(apiClient, store, bot, cfg, log)
 	expiryNotifier := services.NewExpiryNotifierService(bot, store, log, cfg.Notifications.ExpiryWarningDays)
 	inboundSyncService := services.NewInboundSyncService(apiClient, log, cfg.Panel.MultiInboundSync)
+	trafficSyncService := services.NewTrafficSyncService(apiClient, log, cfg.Panel.TrafficSyncHours)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg)
@@ -109,6 +111,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bo
 		forecastService:     forecastService,
 		expiryNotifier:      expiryNotifier,
 		inboundSyncService:  inboundSyncService,
+		trafficSyncService:  trafficSyncService,
 		authMiddleware:      authMiddleware,
 		rateLimiter:         rateLimiter,
 		stopBackup:          make(chan struct{}),
@@ -176,6 +179,11 @@ func (b *Bot) Start() error {
 		}
 		go b.inboundSyncService.Start(ctx, syncHours)
 		b.logger.Infof("Started multi-inbound sync service (interval: %d hours)", syncHours)
+	}
+
+	// Start traffic sync scheduler if enabled
+	if b.config.Panel.TrafficSyncHours > 0 {
+		go b.trafficSyncService.StartSync(ctx)
 	}
 
 	return nil

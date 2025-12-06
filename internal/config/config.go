@@ -47,6 +47,7 @@ type PanelConfig struct {
 	MultiInboundNewUsers  bool `yaml:"multi_inbound_new_users"`  // Create new users in all inbounds
 	MultiInboundSync      bool `yaml:"multi_inbound_sync"`       // Periodically sync existing users to all inbounds
 	MultiInboundSyncHours int  `yaml:"multi_inbound_sync_hours"` // Sync interval in hours (default: 24)
+	TrafficSyncHours      int  `yaml:"traffic_sync_hours"`       // Sync traffic between inbounds interval in hours (0 = disabled)
 }
 
 // TelegramConfig holds Telegram bot configuration

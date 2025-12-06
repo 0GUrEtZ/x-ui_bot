@@ -179,17 +179,7 @@ func (b *Bot) sendSubscriptionInfo(chatID int64, userID int64, email string, tit
 		expiryText = fmt.Sprintf("⏰ Истекает: %s\n📅 Осталось: %d дней %d часов", expiryDate, daysRemaining, hoursRemaining)
 	}
 
-	// Find inbound with highest traffic percentage
-	var maxPercentage float64
-	var maxTrafficInbound string
-	for _, it := range inboundTraffics {
-		if it.Percentage > maxPercentage {
-			maxPercentage = it.Percentage
-			maxTrafficInbound = it.Name
-		}
-	}
-
-	// Build traffic info showing the most used inbound
+	// Build traffic info
 	trafficInfo := ""
 	if totalGB > 0 {
 		limitBytes := totalGB
@@ -207,11 +197,6 @@ func (b *Bot) sendSubscriptionInfo(chatID int64, userID int64, email string, tit
 			trafficEmoji,
 			percentage,
 		)
-
-		// Add info about most used inbound if we have multiple
-		if len(inboundTraffics) > 1 && maxTrafficInbound != "" {
-			trafficInfo += fmt.Sprintf("\n<i>Больше всего: %s (%.1f%%)</i>", maxTrafficInbound, maxPercentage)
-		}
 	} else {
 		trafficInfo = fmt.Sprintf("📊 <b>Трафик:</b> %s (безлимит)", b.clientService.FormatBytes(totalTraffic))
 	}

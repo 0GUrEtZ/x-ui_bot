@@ -20,6 +20,7 @@ panel:
   multi_inbound_new_users: false   # Create new users in all inbounds immediately
   multi_inbound_sync: false        # Periodically sync existing users to all inbounds  
   multi_inbound_sync_hours: 24     # Sync check interval (hours)
+  traffic_sync_hours: 24           # Sync traffic between inbounds (hours, 0 = disabled)
 
 payment:
   bank: "Сбербанк"
