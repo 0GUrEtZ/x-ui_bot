@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -439,12 +440,12 @@ func (b *Bot) createClientForRequest(req *RegistrationRequest) error {
 	return b.apiClient.AddClient(context.Background(), inboundID, clientData)
 }
 
-// stripInboundSuffix removes the ##remarkName suffix from email if present
+// stripInboundSuffix removes the __remarkName suffix from email if present
 func stripInboundSuffix(email string) string {
-	for i := 0; i < len(email)-2; i++ {
-		if email[i] == '#' && email[i+1] == '#' {
-			return email[:i]
-		}
+	// Find last "__" to handle remark names that might contain single "_"
+	lastIndex := strings.LastIndex(email, "__")
+	if lastIndex != -1 {
+		return email[:lastIndex]
 	}
 	return email
 }
