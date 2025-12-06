@@ -154,24 +154,20 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 			continue // Only sync if user exists in multiple inbounds
 		}
 
-		// Find maximum traffic across all inbounds (use highest value, not sum)
-		var maxUp, maxDown int64
+		// Calculate total traffic across all inbounds (sum, not max)
+		var totalUp, totalDown int64
 		for _, statMap := range inboundMap {
 			if up, ok := statMap["up"].(float64); ok {
-				if int64(up) > maxUp {
-					maxUp = int64(up)
-				}
+				totalUp += int64(up)
 			}
 			if down, ok := statMap["down"].(float64); ok {
-				if int64(down) > maxDown {
-					maxDown = int64(down)
-				}
+				totalDown += int64(down)
 			}
 		}
 
-		ts.logger.Debugf("Max traffic for tgId %s: up=%d, down=%d", tgID, maxUp, maxDown)
+		ts.logger.Debugf("Total traffic for tgId %s: up=%d, down=%d", tgID, totalUp, totalDown)
 
-		// Update traffic in all inbounds to match the maximum
+		// Update traffic in all inbounds to match the total sum
 		for inboundID, statMap := range inboundMap {
 			email, _ := statMap["email"].(string)
 			currentUp := int64(0)
@@ -184,21 +180,21 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 				currentDown = int64(down)
 			}
 
-			// Only update if current traffic is less than max
-			if currentUp < maxUp || currentDown < maxDown {
+			// Only update if current traffic differs from total
+			if currentUp != totalUp || currentDown != totalDown {
 				ts.logger.Debugf("Updating %s: current(up=%d, down=%d) -> target(up=%d, down=%d)",
-					email, currentUp, currentDown, maxUp, maxDown)
+					email, currentUp, currentDown, totalUp, totalDown)
 
-				// Send target value (max), not difference - API sets absolute value
-				if err := ts.updateClientTraffic(ctx, email, maxUp, maxDown); err != nil {
+				// Send target value (total sum) - API sets absolute value
+				if err := ts.updateClientTraffic(ctx, email, totalUp, totalDown); err != nil {
 					ts.logger.Errorf("Failed to update traffic for %s (tgId=%s) in inbound %d: %v", email, tgID, inboundID, err)
 				} else {
 					synced++
 					ts.logger.Infof("Synced traffic for %s (tgId=%s): set to up=%d, down=%d",
-						email, tgID, maxUp, maxDown)
+						email, tgID, totalUp, totalDown)
 				}
 			} else {
-				ts.logger.Debugf("Skipping %s - already at max traffic", email)
+				ts.logger.Debugf("Skipping %s - already at total traffic", email)
 			}
 		}
 	}
