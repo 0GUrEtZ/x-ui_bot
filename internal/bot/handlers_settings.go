@@ -480,7 +480,8 @@ func (b *Bot) handleTrafficDetails(chatID int64, userID int64, messageID int) {
 		),
 	)
 
-	b.editMessage(chatID, messageID, msg, keyboard)
+	// Send new message with traffic details instead of editing
+	b.sendMessageWithInlineKeyboard(chatID, msg, keyboard)
 }
 
 // handleMySubscription shows detailed subscription information for the user
