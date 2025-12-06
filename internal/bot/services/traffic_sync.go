@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"x-ui-bot/internal/logger"
@@ -162,14 +161,13 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 
 		// Update traffic in all inbounds for this user to total
 		for inboundID, statMap := range inboundMap {
-			_, _ = statMap["email"].(string)
-			clientID, _ := statMap["id"].(float64)
+			email, _ := statMap["email"].(string)
 
-			if err := ts.updateClientTraffic(ctx, inboundID, int(clientID), int64(clientID), totalUp, totalDown); err != nil {
-				ts.logger.Errorf("Failed to update traffic for user %s in inbound %d: %v", tgID, inboundID, err)
+			if err := ts.updateClientTraffic(ctx, email, totalUp, totalDown); err != nil {
+				ts.logger.Errorf("Failed to update traffic for %s (tgId=%s) in inbound %d: %v", email, tgID, inboundID, err)
 			} else {
 				synced++
-				ts.logger.Debugf("Updated traffic for user %s: up=%d, down=%d", tgID, totalUp, totalDown)
+				ts.logger.Infof("Updated traffic for %s (tgId=%s): up=%d, down=%d", email, tgID, totalUp, totalDown)
 			}
 		}
 	}
@@ -178,16 +176,6 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 }
 
 // updateClientTraffic updates traffic for a specific client using the x-ui API
-// According to x-ui API docs, we can reset traffic using ResetClientTraffic
-// or update using the client data endpoint
-func (ts *TrafficSyncService) updateClientTraffic(ctx context.Context, inboundID int, clientID int, userID int64, up int64, down int64) error {
-	// Use the x-ui API to update client stats
-	// POST /panel/api/inbounds/{inboundId}/addClients
-	// The API doesn't provide direct traffic update, so we use the reset approach
-	// This is a limitation of the x-ui API - we can only reset traffic, not set it
-
-	// For now, log the update that would happen
-	log.Printf("[DEBUG] Would update traffic for inbound %d, client %d (user %d): up=%d, down=%d", inboundID, clientID, userID, up, down)
-
-	return nil
+func (ts *TrafficSyncService) updateClientTraffic(ctx context.Context, email string, up int64, down int64) error {
+	return ts.apiClient.UpdateClientTraffic(ctx, email, up, down)
 }

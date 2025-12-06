@@ -306,6 +306,49 @@ func (c *APIClient) GetClientTrafficsById(ctx context.Context, inboundID int) ([
 	return result.Obj, nil
 }
 
+// UpdateClientTraffic updates traffic statistics for a specific client
+func (c *APIClient) UpdateClientTraffic(ctx context.Context, email string, up int64, down int64) error {
+	path := fmt.Sprintf("/panel/api/inbounds/updateClientTraffic/%s", email)
+
+	payload := map[string]interface{}{
+		"up":   up,
+		"down": down,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	resp, err := c.doRequest(ctx, "POST", path, bytes.NewReader(body), true)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		if err := c.Login(ctx); err != nil {
+			return err
+		}
+		return c.UpdateClientTraffic(ctx, email, up, down)
+	}
+
+	var result struct {
+		Success bool   `json:"success"`
+		Msg     string `json:"msg"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if !result.Success {
+		return fmt.Errorf("API returned success=false: %s", result.Msg)
+	}
+
+	return nil
+}
+
 // UpdateClient updates an existing client in an inbound
 func (c *APIClient) UpdateClient(ctx context.Context, inboundID int, clientID string, clientData map[string]interface{}) error {
 	log.Printf("[INFO] UpdateClient called for inbound=%d, client=%s", inboundID, clientID)
