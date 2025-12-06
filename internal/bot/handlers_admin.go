@@ -430,11 +430,12 @@ func (b *Bot) handleExtendSubscription(chatID int64, userID int64) {
 	// Show duration selection keyboard with prices (no trial for renewals)
 	keyboard := b.createDurationKeyboard(fmt.Sprintf("extend_%d", userID), false)
 
+	cleanEmail := stripInboundSuffix(email)
 	msg := fmt.Sprintf(
 		"🔄 <b>Продление подписки</b>\n\n"+
 			"👤 Аккаунт: %s\n\n"+
 			"Выберите срок продления:",
-		html.EscapeString(email),
+		html.EscapeString(cleanEmail),
 	)
 
 	if _, err := b.bot.SendMessage(context.Background(), tu.Message(tu.ID(chatID), msg).
@@ -483,6 +484,7 @@ func (b *Bot) handleExtensionRequest(userID int64, chatID int64, messageID int, 
 			),
 		)
 
+		cleanEmail := stripInboundSuffix(email)
 		adminMsg := fmt.Sprintf(
 			"🔄 Запрос на продление подписки\n\n"+
 				"👤 Пользователь: %s (ID: %d)%s\n"+
@@ -491,7 +493,7 @@ func (b *Bot) handleExtensionRequest(userID int64, chatID int64, messageID int, 
 			userName,
 			userID,
 			tgUsernameStr,
-			email,
+			cleanEmail,
 			duration,
 		)
 
