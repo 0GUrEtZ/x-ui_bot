@@ -4,18 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"x-ui-bot/internal/logger"
 	"x-ui-bot/pkg/client"
 )
 
-// stripInboundSuffix removes the ::remarkName suffix from email if present
+// stripInboundSuffix removes the __remarkName suffix from email if present
 func stripInboundSuffix(email string) string {
-	for i := 0; i < len(email)-2; i++ {
-		if email[i] == ':' && email[i+1] == ':' {
-			return email[:i]
-		}
+	// Find last "__" to handle remark names that might contain single "_"
+	lastIndex := strings.LastIndex(email, "__")
+	if lastIndex != -1 {
+		return email[:lastIndex]
 	}
 	return email
 }
@@ -165,7 +166,7 @@ func (s *InboundSyncService) collectAllUsers(inbounds []map[string]interface{}) 
 
 			// Only add if not already present (use first occurrence)
 			if _, exists := users[tgID]; !exists {
-				// Strip ::ibN suffix from email
+				// Strip __ibN suffix from email
 				email := s.extractString(clientData, "email")
 				cleanEmail := stripInboundSuffix(email)
 
@@ -248,8 +249,8 @@ func (s *InboundSyncService) createClientInInbound(userInfo *UserClientInfo, inb
 	}
 
 	// Add unique suffix to email to avoid duplicate errors across inbounds
-	// Format: email::remarkName
-	emailForInbound := fmt.Sprintf("%s::%s", userInfo.Email, inboundRemark)
+	// Format: email__remarkName
+	emailForInbound := fmt.Sprintf("%s__%s", userInfo.Email, inboundRemark)
 
 	// Build client data with same parameters
 	clientData := map[string]interface{}{
