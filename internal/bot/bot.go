@@ -92,7 +92,7 @@ func NewBot(cfg *config.Config, apiClient *client.APIClient, store Storage) (*Bo
 	forecastService := services.NewForecastService(apiClient, store, bot, cfg, log)
 	expiryNotifier := services.NewExpiryNotifierService(bot, store, log, cfg.Notifications.ExpiryWarningDays)
 	inboundSyncService := services.NewInboundSyncService(apiClient, log, cfg.Panel.MultiInboundSync)
-	trafficSyncService := services.NewTrafficSyncService(apiClient, log, cfg.Panel.TrafficSyncHours)
+	trafficSyncService := services.NewTrafficSyncService(apiClient, clientService, log, cfg.Panel.TrafficSyncHours)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg)

@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"time"
 
@@ -12,19 +11,21 @@ import (
 
 // TrafficSyncService handles synchronization of traffic between inbounds
 type TrafficSyncService struct {
-	apiClient *client.APIClient
-	logger    *logger.Logger
-	enabled   bool
-	syncHours int
+	apiClient     *client.APIClient
+	clientService *ClientService
+	logger        *logger.Logger
+	enabled       bool
+	syncHours     int
 }
 
 // NewTrafficSyncService creates a new traffic sync service
-func NewTrafficSyncService(apiClient *client.APIClient, logger *logger.Logger, syncHours int) *TrafficSyncService {
+func NewTrafficSyncService(apiClient *client.APIClient, clientService *ClientService, logger *logger.Logger, syncHours int) *TrafficSyncService {
 	return &TrafficSyncService{
-		apiClient: apiClient,
-		logger:    logger,
-		enabled:   syncHours > 0,
-		syncHours: syncHours,
+		apiClient:     apiClient,
+		clientService: clientService,
+		logger:        logger,
+		enabled:       syncHours > 0,
+		syncHours:     syncHours,
 	}
 }
 
@@ -73,30 +74,26 @@ func (ts *TrafficSyncService) syncAllTraffic(ctx context.Context) {
 	emailToTgID := make(map[string]string)
 
 	for _, inbound := range inbounds {
+		inboundID := int(inbound["id"].(float64))
 		settingsStr := ""
 		if settings, ok := inbound["settings"].(string); ok {
 			settingsStr = settings
 		}
 
+		ts.logger.Debugf("Parsing clients for inbound %d", inboundID)
+
 		// Parse clients from settings to get tgId
-		var inboundSettings map[string]interface{}
-		if err := json.Unmarshal([]byte(settingsStr), &inboundSettings); err != nil {
+		clients, err := ts.clientService.ParseClients(settingsStr)
+		if err != nil {
+			ts.logger.Errorf("Failed to parse clients for inbound %d: %v", inboundID, err)
 			continue
 		}
 
-		clientsArray, ok := inboundSettings["clients"].([]interface{})
-		if !ok {
-			continue
-		}
+		ts.logger.Debugf("Found %d clients in inbound %d", len(clients), inboundID)
 
-		for _, client := range clientsArray {
-			clientMap, ok := client.(map[string]interface{})
-			if !ok {
-				continue
-			}
-
-			email, _ := clientMap["email"].(string)
-			tgID, _ := clientMap["tgId"].(string)
+		for _, client := range clients {
+			email := client["email"]
+			tgID := client["tgId"]
 
 			if email != "" && tgID != "" {
 				emailToTgID[email] = tgID
